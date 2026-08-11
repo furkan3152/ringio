@@ -1,0 +1,909 @@
+import { createHash, randomBytes } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { AnchorProvider, BN, Program, Wallet, type Idl } from "@coral-xyz/anchor";
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  SYSVAR_RENT_PUBKEY,
+  SystemProgram,
+  type ConfirmOptions,
+} from "@solana/web3.js";
+
+const PROGRAM_ID = new PublicKey("JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy");
+const USDC_MINT = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
+const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+const COMMITMENT_DOMAIN = Buffer.from("ringio-commitment-v1");
+const GROUP_ACCOUNT_SIZE = 2_387;
+const MEMBER_ACCOUNT_SIZE = 190;
+const CONTRIBUTION_RAW = BigInt(1_000_000);
+const MEMBER_COUNT = 2;
+// Public devnet RPC throttling can delay a confirmed transaction by tens of seconds.
+// Keep the round window short enough for CI while long enough for real signed CPIs.
+const PERIOD_SECONDS = 90;
+const GRACE_SECONDS = 15;
+const PHASE_WINDOW_SECONDS = 3_600;
+const STATUS_NAMES = ["forming", "revealing", "collateralizing", "active", "completed", "cancelled", "defaulted"] as const;
+
+const scriptDirectory = dirname(fileURLToPath(import.meta.url));
+const repositoryRoot = resolve(scriptDirectory, "../..");
+
+type Phase = "prepare" | "complete" | "all" | "cancel" | "cleanup";
+
+type E2EState = {
+  version: 1;
+  groupId: string;
+  group: string;
+  creatorSecretHex: string;
+  participantSecretHex: string;
+  startingCombinedRaw?: string;
+  expectedEarlyCoverRejected?: boolean;
+  signatures: Record<string, string>;
+};
+
+type GroupState = {
+  address: PublicKey;
+  creator: PublicKey;
+  mint: PublicKey;
+  potVault: PublicKey;
+  collateralVault: PublicKey;
+  members: PublicKey[];
+  payoutOrder: PublicKey[];
+  id: bigint;
+  contributionAmount: bigint;
+  totalCollateralLocked: bigint;
+  periodSeconds: bigint;
+  graceSeconds: bigint;
+  roundStartedAt: bigint;
+  memberCount: number;
+  joinedCount: number;
+  revealedCount: number;
+  collateralizedCount: number;
+  currentRound: number;
+  roundContributions: number;
+  statusIndex: number;
+  status: (typeof STATUS_NAMES)[number];
+};
+
+type MemberState = {
+  address: PublicKey;
+  wallet: PublicKey;
+  collateralLocked: bigint;
+  payoutRank: number;
+  lastContributedRound: number;
+  defaults: number;
+  revealed: boolean;
+  collateralPosted: boolean;
+  payoutReceived: boolean;
+  lastResolutionKind: number;
+};
+
+type TransactionBuilder = {
+  accountsStrict(accounts: Record<string, PublicKey>): TransactionBuilder;
+  signers(signers: Keypair[]): TransactionBuilder;
+  simulate(): Promise<unknown>;
+  rpc(options?: ConfirmOptions): Promise<string>;
+};
+
+function option(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  return index === -1 ? undefined : process.argv[index + 1];
+}
+
+function requiredOption(name: string): string {
+  const value = option(name);
+  if (!value) throw new Error(`Missing required option ${name}`);
+  return value;
+}
+
+function parsePhase(): Phase {
+  const value = option("--phase") ?? "all";
+  if (value !== "prepare" && value !== "complete" && value !== "all" && value !== "cancel" && value !== "cleanup") {
+    throw new Error("--phase must be prepare, complete, all, cancel, or cleanup");
+  }
+  return value;
+}
+
+function describeError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const candidate = error as Error & {
+    logs?: unknown;
+    error?: unknown;
+    transactionMessage?: unknown;
+    simulationResponse?: unknown;
+  };
+  return JSON.stringify({
+    name: candidate.name,
+    message: candidate.message || "(empty message)",
+    stack: candidate.stack,
+    logs: candidate.logs,
+    cause: candidate.cause instanceof Error ? candidate.cause.message : candidate.cause,
+    error: candidate.error,
+    transactionMessage: candidate.transactionMessage,
+    simulationResponse: candidate.simulationResponse,
+  }, null, 2);
+}
+
+function assertOutsideRepository(path: string, label: string): void {
+  const fromRepository = relative(repositoryRoot, path);
+  if (fromRepository === "" || (!fromRepository.startsWith("..") && !resolve(path).startsWith("/tmp/"))) {
+    throw new Error(`${label} must stay outside the repository`);
+  }
+}
+
+function loadKeypair(path: string): Keypair {
+  assertOutsideRepository(path, "Keypair");
+  const bytes = JSON.parse(readFileSync(path, "utf8")) as number[];
+  if (bytes.length !== 64 || bytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) {
+    throw new Error(`Invalid keypair file ${path}`);
+  }
+  return Keypair.fromSecretKey(Uint8Array.from(bytes));
+}
+
+function writeState(path: string, state: E2EState): void {
+  assertOutsideRepository(path, "State file");
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.tmp-${process.pid}`;
+  writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+  chmodSync(temporary, 0o600);
+  renameSync(temporary, path);
+  chmodSync(path, 0o600);
+}
+
+function loadOrCreateState(path: string, creator: PublicKey): E2EState {
+  if (existsSync(path)) {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as E2EState;
+    if (
+      parsed.version !== 1 ||
+      !/^\d+$/.test(parsed.groupId) ||
+      !/^[0-9a-f]{64}$/.test(parsed.creatorSecretHex) ||
+      !/^[0-9a-f]{64}$/.test(parsed.participantSecretHex)
+    ) {
+      throw new Error("Invalid E2E state file");
+    }
+    return parsed;
+  }
+
+  const groupId = BigInt(Date.now());
+  const [group] = PublicKey.findProgramAddressSync(
+    [Buffer.from("group"), creator.toBuffer(), u64(groupId)],
+    PROGRAM_ID,
+  );
+  const state: E2EState = {
+    version: 1,
+    groupId: groupId.toString(),
+    group: group.toBase58(),
+    creatorSecretHex: randomNonzeroSecret().toString("hex"),
+    participantSecretHex: randomNonzeroSecret().toString("hex"),
+    signatures: {},
+  };
+  writeState(path, state);
+  return state;
+}
+
+function randomNonzeroSecret(): Buffer {
+  let secret = randomBytes(32);
+  while (secret.equals(Buffer.alloc(32))) secret = randomBytes(32);
+  return secret;
+}
+
+function u64(value: bigint): Buffer {
+  const result = Buffer.alloc(8);
+  result.writeBigUInt64LE(value);
+  return result;
+}
+
+function commitment(group: PublicKey, member: PublicKey, secret: Buffer): number[] {
+  return Array.from(
+    createHash("sha256")
+      .update(COMMITMENT_DOMAIN)
+      .update(group.toBuffer())
+      .update(member.toBuffer())
+      .update(secret)
+      .digest(),
+  );
+}
+
+function memberPda(group: PublicKey, wallet: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("member"), group.toBuffer(), wallet.toBuffer()],
+    PROGRAM_ID,
+  )[0];
+}
+
+function associatedTokenAddress(owner: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), USDC_MINT.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+  )[0];
+}
+
+function publicKeyAt(data: Buffer, offset: number): PublicKey {
+  return new PublicKey(data.subarray(offset, offset + 32));
+}
+
+function decodeGroup(address: PublicKey, data: Buffer): GroupState {
+  if (data.length !== GROUP_ACCOUNT_SIZE) throw new Error(`Invalid Group size ${data.length}`);
+  const memberCount = data.readUInt16LE(2_328);
+  const statusIndex = data.readUInt8(2_342);
+  const status = STATUS_NAMES[statusIndex];
+  if (!status || memberCount !== MEMBER_COUNT) throw new Error("Unexpected Group layout/state");
+  return {
+    address,
+    creator: publicKeyAt(data, 8),
+    mint: publicKeyAt(data, 40),
+    potVault: publicKeyAt(data, 72),
+    collateralVault: publicKeyAt(data, 104),
+    members: Array.from({ length: memberCount }, (_, index) => publicKeyAt(data, 168 + index * 32)),
+    payoutOrder: Array.from({ length: memberCount }, (_, index) => publicKeyAt(data, 1_192 + index * 32)),
+    id: data.readBigUInt64LE(2_216),
+    contributionAmount: data.readBigUInt64LE(2_224),
+    totalCollateralLocked: data.readBigUInt64LE(2_232),
+    periodSeconds: data.readBigInt64LE(2_240),
+    graceSeconds: data.readBigInt64LE(2_248),
+    roundStartedAt: data.readBigInt64LE(2_320),
+    memberCount,
+    joinedCount: data.readUInt16LE(2_330),
+    revealedCount: data.readUInt16LE(2_332),
+    collateralizedCount: data.readUInt16LE(2_334),
+    currentRound: data.readUInt16LE(2_336),
+    roundContributions: data.readUInt16LE(2_338),
+    statusIndex,
+    status,
+  };
+}
+
+function decodeMember(address: PublicKey, data: Buffer): MemberState {
+  if (data.length !== MEMBER_ACCOUNT_SIZE) throw new Error(`Invalid Member size ${data.length}`);
+  return {
+    address,
+    wallet: publicKeyAt(data, 40),
+    collateralLocked: data.readBigUInt64LE(136),
+    payoutRank: data.readUInt16LE(146),
+    lastContributedRound: data.readUInt16LE(148),
+    defaults: data.readUInt16LE(152),
+    revealed: data.readUInt8(154) === 1,
+    collateralPosted: data.readUInt8(155) === 1,
+    payoutReceived: data.readUInt8(156) === 1,
+    lastResolutionKind: data.readUInt8(157),
+  };
+}
+
+async function fetchGroup(connection: Connection, group: PublicKey): Promise<GroupState | null> {
+  const account = await connection.getAccountInfo(group, "confirmed");
+  return account ? decodeGroup(group, account.data) : null;
+}
+
+async function fetchMember(connection: Connection, address: PublicKey): Promise<MemberState> {
+  const account = await connection.getAccountInfo(address, "confirmed");
+  if (!account) throw new Error(`Missing Member ${address.toBase58()}`);
+  return decodeMember(address, account.data);
+}
+
+async function tokenBalance(connection: Connection, address: PublicKey): Promise<bigint> {
+  const account = await connection.getAccountInfo(address, "confirmed");
+  if (!account || !account.owner.equals(TOKEN_PROGRAM_ID) || account.data.length < 72) {
+    throw new Error(`Missing classic SPL token account ${address.toBase58()}`);
+  }
+  return account.data.readBigUInt64LE(64);
+}
+
+async function waitForFinalized(connection: Connection, signature: string): Promise<void> {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const status = (await connection.getSignatureStatuses([signature], { searchTransactionHistory: true })).value[0];
+    if (status?.err) throw new Error(`Transaction ${signature} failed: ${JSON.stringify(status.err)}`);
+    if (status?.confirmationStatus === "finalized") return;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+  }
+  throw new Error(`Transaction did not finalize in time: ${signature}`);
+}
+
+async function simulateAndSend(
+  connection: Connection,
+  label: string,
+  builder: TransactionBuilder,
+  signers: Keypair[],
+  state: E2EState,
+  statePath: string,
+): Promise<string> {
+  // Anchor's legacy-transaction simulator re-signs with only the additional
+  // signers when sigVerify is enabled, which can discard the provider-wallet
+  // signature. Simulate unsigned (the message still retains signer flags), then
+  // require every real signature on the submitted transaction below.
+  await builder.simulate();
+  const signed = signers.length > 0 ? builder.signers(signers) : builder;
+  const signature = await signed.rpc({ commitment: "confirmed", skipPreflight: false });
+  await waitForFinalized(connection, signature);
+  state.signatures[label] = signature;
+  writeState(statePath, state);
+  console.log(`${label}: ${signature}`);
+  return signature;
+}
+
+async function expectSimulationFailure(label: string, builder: TransactionBuilder, signers: Keypair[]): Promise<void> {
+  try {
+    void signers;
+    await builder.simulate();
+  } catch (error) {
+    const details = describeError(error);
+    if (!details.includes("GracePeriodActive") && !details.includes("0x1785") && !details.includes('"Custom":6021')) {
+      throw new Error(`${label} failed for an unexpected reason: ${details}`);
+    }
+    console.log(`${label}: expected GracePeriodActive rejection`);
+    return;
+  }
+  throw new Error(`${label} unexpectedly succeeded`);
+}
+
+async function chainTimestamp(connection: Connection): Promise<number> {
+  const slot = await connection.getSlot("confirmed");
+  const blockTime = await connection.getBlockTime(slot);
+  if (blockTime === null) throw new Error("Devnet block time unavailable");
+  return blockTime;
+}
+
+async function waitPastGrace(connection: Connection, group: PublicKey): Promise<void> {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const current = await fetchGroup(connection, group);
+    if (!current) throw new Error("Group disappeared while waiting for grace");
+    const threshold = Number(current.roundStartedAt + current.periodSeconds + current.graceSeconds);
+    const remainingSeconds = threshold - (await chainTimestamp(connection)) + 1;
+    if (remainingSeconds <= 0) return;
+    await new Promise((resolveWait) => setTimeout(resolveWait, Math.min(remainingSeconds * 1_000, 10_000)));
+  }
+  throw new Error("Devnet grace window did not elapse in time");
+}
+
+async function main(): Promise<void> {
+  const phase = parsePhase();
+  const rpc = option("--rpc") ?? "https://api.devnet.solana.com";
+  const deployerPath = resolve(requiredOption("--deployer"));
+  const participantPath = resolve(requiredOption("--participant"));
+  const keeperPath = resolve(requiredOption("--keeper"));
+  const statePath = resolve(requiredOption("--state-file"));
+  assertOutsideRepository(statePath, "State file");
+
+  const deployer = loadKeypair(deployerPath);
+  const participant = loadKeypair(participantPath);
+  const keeper = loadKeypair(keeperPath);
+  const state = loadOrCreateState(statePath, deployer.publicKey);
+  const groupId = BigInt(state.groupId);
+  const [config] = PublicKey.findProgramAddressSync([Buffer.from("config")], PROGRAM_ID);
+  const [group] = PublicKey.findProgramAddressSync(
+    [Buffer.from("group"), deployer.publicKey.toBuffer(), u64(groupId)],
+    PROGRAM_ID,
+  );
+  if (state.group !== group.toBase58()) throw new Error("State file Group does not match its group id");
+  const creatorMember = memberPda(group, deployer.publicKey);
+  const participantMember = memberPda(group, participant.publicKey);
+  const [invite] = PublicKey.findProgramAddressSync(
+    [Buffer.from("invite"), group.toBuffer(), participant.publicKey.toBuffer()],
+    PROGRAM_ID,
+  );
+  const [potVault] = PublicKey.findProgramAddressSync([Buffer.from("pot-vault"), group.toBuffer()], PROGRAM_ID);
+  const [collateralVault] = PublicKey.findProgramAddressSync(
+    [Buffer.from("collateral-vault"), group.toBuffer()],
+    PROGRAM_ID,
+  );
+  const creatorAta = associatedTokenAddress(deployer.publicKey);
+  const participantAta = associatedTokenAddress(participant.publicKey);
+  const connection = new Connection(rpc, "confirmed");
+
+  const idlPath = resolve(repositoryRoot, "target/idl/ringio.json");
+  if (!existsSync(idlPath)) throw new Error("Missing generated IDL; run anchor build first");
+  const idl = JSON.parse(readFileSync(idlPath, "utf8")) as Idl;
+  if (idl.address !== PROGRAM_ID.toBase58()) throw new Error("Generated IDL program id mismatch");
+  const provider = new AnchorProvider(connection, new Wallet(deployer), {
+    commitment: "confirmed",
+    preflightCommitment: "confirmed",
+    skipPreflight: false,
+  });
+  const program = new Program(idl, provider);
+  const methods = program.methods as unknown as Record<string, (...args: unknown[]) => TransactionBuilder>;
+  const method = (name: string, ...args: unknown[]): TransactionBuilder => {
+    const factory = methods[name];
+    if (!factory) throw new Error(`Generated IDL is missing ${name}`);
+    return factory(...args);
+  };
+
+  const configAccount = await connection.getAccountInfo(config, "confirmed");
+  const mintAccount = await connection.getAccountInfo(USDC_MINT, "confirmed");
+  if (!configAccount?.owner.equals(PROGRAM_ID)) throw new Error("GlobalConfig is missing or has the wrong owner");
+  if (!mintAccount?.owner.equals(TOKEN_PROGRAM_ID) || mintAccount.data.readUInt8(44) !== 6) {
+    throw new Error("Configured devnet USDC mint failed owner/decimal verification");
+  }
+
+  if (phase === "cancel") {
+    const current = await fetchGroup(connection, group);
+    if (!current) throw new Error("Cannot cancel a missing Group");
+    if (current.status === "cancelled") {
+      console.log(JSON.stringify({ phase: "cancelled", group: group.toBase58(), alreadyCancelled: true }, null, 2));
+      return;
+    }
+    await simulateAndSend(
+      connection,
+      "cancelGroup",
+      method("cancelGroup").accountsStrict({ config, group, caller: deployer.publicKey }),
+      [],
+      state,
+      statePath,
+    );
+    const cancelled = await fetchGroup(connection, group);
+    if (cancelled?.status !== "cancelled") throw new Error("Cancelled Group state was not confirmed");
+    console.log(JSON.stringify({ phase: "cancelled", group: group.toBase58(), status: cancelled.status }, null, 2));
+    return;
+  }
+
+  if (phase === "cleanup") {
+    let current = await fetchGroup(connection, group);
+    if (!current) throw new Error("Cannot clean up a missing Group");
+    if (current.status === "active") {
+      if (current.roundContributions !== 0) {
+        throw new Error("Cleanup refuses an active group with pending direct contributions");
+      }
+      await waitPastGrace(connection, group);
+      const delinquentWallet = current.members[0];
+      await simulateAndSend(
+        connection,
+        "abortUncoveredRound",
+        method("abortUncoveredRound").accountsStrict({
+          config,
+          group,
+          delinquentMember: memberPda(group, delinquentWallet),
+          keeper: keeper.publicKey,
+        }),
+        [keeper],
+        state,
+        statePath,
+      );
+      current = await fetchGroup(connection, group);
+    }
+    if (current?.status !== "defaulted") {
+      throw new Error(`Cleanup expected a defaulted Group, received ${current?.status ?? "missing"}`);
+    }
+
+    const refundableMembers = [
+      { keypair: deployer, member: creatorMember, ata: creatorAta },
+      { keypair: participant, member: participantMember, ata: participantAta },
+    ];
+    for (const actor of refundableMembers) {
+      const memberState = await fetchMember(connection, actor.member);
+      if (memberState.collateralLocked === BigInt(0)) continue;
+      await simulateAndSend(
+        connection,
+        `refundCollateral-${actor.keypair.publicKey.equals(deployer.publicKey) ? "creator" : "participant"}`,
+        method("refundCollateral").accountsStrict({
+          group,
+          member: actor.member,
+          collateralVault,
+          memberToken: actor.ata,
+          mint: USDC_MINT,
+          participant: actor.keypair.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        }),
+        actor.keypair.publicKey.equals(deployer.publicKey) ? [] : [actor.keypair],
+        state,
+        statePath,
+      );
+    }
+    const collateralBalance = await tokenBalance(connection, collateralVault);
+    if (collateralBalance !== BigInt(0)) throw new Error("Cleanup left collateral in the Group vault");
+    console.log(JSON.stringify({ phase: "cleaned-up", group: group.toBase58(), status: "defaulted" }, null, 2));
+    return;
+  }
+
+  if (phase === "prepare" || phase === "all") {
+    let current = await fetchGroup(connection, group);
+    if (!current) {
+      const now = Math.floor(Date.now() / 1_000);
+      await simulateAndSend(
+        connection,
+        "createGroup",
+        method("createGroup", {
+          groupId: new BN(state.groupId),
+          memberCount: MEMBER_COUNT,
+          contributionAmount: new BN(CONTRIBUTION_RAW.toString()),
+          periodSeconds: new BN(PERIOD_SECONDS),
+          graceSeconds: new BN(GRACE_SECONDS),
+          joinDeadline: new BN(now + PHASE_WINDOW_SECONDS),
+          revealWindowSeconds: new BN(PHASE_WINDOW_SECONDS),
+          collateralWindowSeconds: new BN(PHASE_WINDOW_SECONDS),
+          creatorCommitment: commitment(group, deployer.publicKey, Buffer.from(state.creatorSecretHex, "hex")),
+        }).accountsStrict({
+          config,
+          group,
+          creatorMember,
+          potVault,
+          collateralVault,
+          mint: USDC_MINT,
+          creator: deployer.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: SYSVAR_RENT_PUBKEY,
+        }),
+        [],
+        state,
+        statePath,
+      );
+      current = await fetchGroup(connection, group);
+    }
+    if (!current) throw new Error("Group creation did not produce an account");
+    if (
+      !current.creator.equals(deployer.publicKey) ||
+      !current.mint.equals(USDC_MINT) ||
+      current.id !== groupId ||
+      current.contributionAmount !== CONTRIBUTION_RAW ||
+      current.periodSeconds !== BigInt(PERIOD_SECONDS) ||
+      current.graceSeconds !== BigInt(GRACE_SECONDS)
+    ) {
+      throw new Error("Created Group economics do not match the requested test terms");
+    }
+
+    if (current.status === "forming") {
+      if (!(await connection.getAccountInfo(invite, "confirmed"))) {
+        await simulateAndSend(
+          connection,
+          "inviteMember",
+          method("inviteMember", participant.publicKey).accountsStrict({
+            config,
+            group,
+            invite,
+            creator: deployer.publicKey,
+            systemProgram: SystemProgram.programId,
+          }),
+          [],
+          state,
+          statePath,
+        );
+      }
+      await simulateAndSend(
+        connection,
+        "joinGroup",
+        method(
+          "joinGroup",
+          commitment(group, participant.publicKey, Buffer.from(state.participantSecretHex, "hex")),
+        ).accountsStrict({
+          config,
+          group,
+          invite,
+          member: participantMember,
+          participant: participant.publicKey,
+          systemProgram: SystemProgram.programId,
+        }),
+        [participant],
+        state,
+        statePath,
+      );
+      current = await fetchGroup(connection, group);
+    }
+    if (!current) throw new Error("Group disappeared after join");
+
+    if (current.status === "revealing") {
+      const creatorState = await fetchMember(connection, creatorMember);
+      const participantState = await fetchMember(connection, participantMember);
+      if (!creatorState.revealed) {
+        await simulateAndSend(
+          connection,
+          "revealCreator",
+          method("revealSecret", Array.from(Buffer.from(state.creatorSecretHex, "hex"))).accountsStrict({
+            config,
+            group,
+            member: creatorMember,
+            participant: deployer.publicKey,
+          }),
+          [],
+          state,
+          statePath,
+        );
+      }
+      if (!participantState.revealed) {
+        await simulateAndSend(
+          connection,
+          "revealParticipant",
+          method("revealSecret", Array.from(Buffer.from(state.participantSecretHex, "hex"))).accountsStrict({
+            config,
+            group,
+            member: participantMember,
+            participant: participant.publicKey,
+          }),
+          [participant],
+          state,
+          statePath,
+        );
+      }
+      current = await fetchGroup(connection, group);
+      if (current?.status === "revealing") {
+        await simulateAndSend(
+          connection,
+          "finalizeOrder",
+          method("finalizeOrder").accountsStrict({ config, group }),
+          [],
+          state,
+          statePath,
+        );
+      }
+    }
+
+    current = await fetchGroup(connection, group);
+    if (!current || !["collateralizing", "active", "completed"].includes(current.status)) {
+      throw new Error(`Preparation ended in unexpected state ${current?.status ?? "missing"}`);
+    }
+    console.log(JSON.stringify({ phase: "prepared", group: group.toBase58(), status: current.status }, null, 2));
+    if (phase === "prepare") return;
+  }
+
+  let current = await fetchGroup(connection, group);
+  if (!current) throw new Error("Prepared E2E Group does not exist");
+  const creatorStarting = await tokenBalance(connection, creatorAta);
+  const participantStarting = await tokenBalance(connection, participantAta);
+  if (current.status === "collateralizing" && (creatorStarting < BigInt(2_000_000) || participantStarting < BigInt(2_000_000))) {
+    console.log(JSON.stringify({
+      phase: "awaiting-usdc",
+      mint: USDC_MINT.toBase58(),
+      creator: deployer.publicKey.toBase58(),
+      creatorAta: creatorAta.toBase58(),
+      creatorBalanceRaw: creatorStarting.toString(),
+      participant: participant.publicKey.toBase58(),
+      participantAta: participantAta.toBase58(),
+      participantBalanceRaw: participantStarting.toString(),
+      minimumPerWalletRaw: "2000000",
+    }, null, 2));
+    process.exitCode = 2;
+    return;
+  }
+
+  if (current.status === "collateralizing") {
+    if (!state.startingCombinedRaw) {
+      state.startingCombinedRaw = (creatorStarting + participantStarting).toString();
+      writeState(statePath, state);
+    }
+    const creatorState = await fetchMember(connection, creatorMember);
+    const participantState = await fetchMember(connection, participantMember);
+    if (!creatorState.collateralPosted) {
+      await simulateAndSend(
+        connection,
+        "postCollateralCreator",
+        method("postCollateral").accountsStrict({
+          config,
+          group,
+          member: creatorMember,
+          source: creatorAta,
+          collateralVault,
+          mint: USDC_MINT,
+          participant: deployer.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        }),
+        [],
+        state,
+        statePath,
+      );
+    }
+    if (!participantState.collateralPosted) {
+      await simulateAndSend(
+        connection,
+        "postCollateralParticipant",
+        method("postCollateral").accountsStrict({
+          config,
+          group,
+          member: participantMember,
+          source: participantAta,
+          collateralVault,
+          mint: USDC_MINT,
+          participant: participant.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        }),
+        [participant],
+        state,
+        statePath,
+      );
+    }
+    await simulateAndSend(
+      connection,
+      "activateGroup",
+      method("activateGroup").accountsStrict({ config, group, collateralVault }),
+      [],
+      state,
+      statePath,
+    );
+    current = await fetchGroup(connection, group);
+  }
+
+  if (!current || (current.status !== "active" && current.status !== "completed")) {
+    throw new Error(`Completion started from unexpected state ${current?.status ?? "missing"}`);
+  }
+
+  const walletByAddress = new Map([
+    [deployer.publicKey.toBase58(), { keypair: deployer, member: creatorMember, ata: creatorAta }],
+    [participant.publicKey.toBase58(), { keypair: participant, member: participantMember, ata: participantAta }],
+  ]);
+
+  if (current.status === "active" && current.currentRound === 0) {
+    for (const wallet of [deployer.publicKey, participant.publicKey]) {
+      const actor = walletByAddress.get(wallet.toBase58());
+      if (!actor) throw new Error("Missing round-zero actor");
+      const memberState = await fetchMember(connection, actor.member);
+      if (memberState.lastContributedRound !== 0) {
+        await simulateAndSend(
+          connection,
+          `contributeRound0-${wallet.equals(deployer.publicKey) ? "creator" : "participant"}`,
+          method("contribute").accountsStrict({
+            config,
+            group,
+            member: actor.member,
+            source: actor.ata,
+            potVault,
+            collateralVault,
+            mint: USDC_MINT,
+            participant: wallet,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          }),
+          wallet.equals(deployer.publicKey) ? [] : [actor.keypair],
+          state,
+          statePath,
+        );
+      }
+    }
+    current = await fetchGroup(connection, group);
+    if (!current || current.roundContributions !== MEMBER_COUNT) throw new Error("Round zero is not fully funded");
+    const recipient = current.payoutOrder[0];
+    const actor = walletByAddress.get(recipient.toBase58());
+    if (!actor) throw new Error("Round-zero recipient is not a known member");
+    await simulateAndSend(
+      connection,
+      "settleRound0",
+      method("settleRound").accountsStrict({
+        config,
+        group,
+        recipientMember: actor.member,
+        potVault,
+        recipientToken: actor.ata,
+        mint: USDC_MINT,
+        keeper: keeper.publicKey,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      }),
+      [keeper],
+      state,
+      statePath,
+    );
+    current = await fetchGroup(connection, group);
+  }
+
+  if (current?.status === "active" && current.currentRound === 1) {
+    const earlyRecipient = current.payoutOrder[0];
+    const finalRecipient = current.payoutOrder[1];
+    const earlyActor = walletByAddress.get(earlyRecipient.toBase58());
+    const finalActor = walletByAddress.get(finalRecipient.toBase58());
+    if (!earlyActor || !finalActor) throw new Error("Final-round recipients are not known members");
+
+    const finalMemberState = await fetchMember(connection, finalActor.member);
+    if (finalMemberState.lastContributedRound !== 1) {
+      await simulateAndSend(
+        connection,
+        "contributeRound1-finalRecipient",
+        method("contribute").accountsStrict({
+          config,
+          group,
+          member: finalActor.member,
+          source: finalActor.ata,
+          potVault,
+          collateralVault,
+          mint: USDC_MINT,
+          participant: finalRecipient,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        }),
+        finalRecipient.equals(deployer.publicKey) ? [] : [finalActor.keypair],
+        state,
+        statePath,
+      );
+    }
+
+    const coverBuilder = (): TransactionBuilder => method("coverDefault").accountsStrict({
+      config,
+      group,
+      member: earlyActor.member,
+      potVault,
+      collateralVault,
+      mint: USDC_MINT,
+      keeper: keeper.publicKey,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    });
+    if (!state.expectedEarlyCoverRejected) {
+      await expectSimulationFailure("coverDefault-before-grace", coverBuilder(), [keeper]);
+      state.expectedEarlyCoverRejected = true;
+      writeState(statePath, state);
+    }
+    await waitPastGrace(connection, group);
+    const earlyMemberState = await fetchMember(connection, earlyActor.member);
+    if (earlyMemberState.lastContributedRound !== 1) {
+      await simulateAndSend(
+        connection,
+        "coverDefaultRound1",
+        coverBuilder(),
+        [keeper],
+        state,
+        statePath,
+      );
+    }
+    await simulateAndSend(
+      connection,
+      "settleRound1",
+      method("settleRound").accountsStrict({
+        config,
+        group,
+        recipientMember: finalActor.member,
+        potVault,
+        recipientToken: finalActor.ata,
+        mint: USDC_MINT,
+        keeper: keeper.publicKey,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      }),
+      [keeper],
+      state,
+      statePath,
+    );
+    current = await fetchGroup(connection, group);
+  }
+
+  if (!current || current.status !== "completed" || current.currentRound !== MEMBER_COUNT) {
+    throw new Error(`E2E Group did not complete: ${current?.status ?? "missing"}`);
+  }
+  const creatorFinal = await fetchMember(connection, creatorMember);
+  const participantFinal = await fetchMember(connection, participantMember);
+  const potFinal = await tokenBalance(connection, potVault);
+  const collateralFinal = await tokenBalance(connection, collateralVault);
+  const creatorBalanceFinal = await tokenBalance(connection, creatorAta);
+  const participantBalanceFinal = await tokenBalance(connection, participantAta);
+  const earlyDefault = [creatorFinal, participantFinal].find((member) => member.payoutRank === 0);
+  if (
+    !earlyDefault ||
+    earlyDefault.defaults !== 1 ||
+    earlyDefault.lastResolutionKind !== 2 ||
+    !creatorFinal.payoutReceived ||
+    !participantFinal.payoutReceived ||
+    creatorFinal.collateralLocked !== BigInt(0) ||
+    participantFinal.collateralLocked !== BigInt(0) ||
+    current.totalCollateralLocked !== BigInt(0) ||
+    potFinal !== BigInt(0) ||
+    collateralFinal !== BigInt(0)
+  ) {
+    throw new Error("Final account invariants failed");
+  }
+  if (
+    state.startingCombinedRaw &&
+    creatorBalanceFinal + participantBalanceFinal !== BigInt(state.startingCombinedRaw)
+  ) {
+    throw new Error("Participant USDC conservation failed");
+  }
+
+  console.log(JSON.stringify({
+    phase: "completed",
+    programId: PROGRAM_ID.toBase58(),
+    group: group.toBase58(),
+    groupId: state.groupId,
+    mint: USDC_MINT.toBase58(),
+    status: current.status,
+    rounds: current.currentRound,
+    defaultCoveredWallet: earlyDefault.wallet.toBase58(),
+    defaults: earlyDefault.defaults,
+    potRaw: potFinal.toString(),
+    collateralRaw: collateralFinal.toString(),
+    participantCombinedRaw: (creatorBalanceFinal + participantBalanceFinal).toString(),
+    signatures: state.signatures,
+  }, null, 2));
+}
+
+main().catch((error: unknown) => {
+  console.error(describeError(error));
+  process.exit(1);
+});

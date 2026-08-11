@@ -1,0 +1,25 @@
+{
+  "name": "ringio",
+  "version": "0.1.0",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/furkan3152/ringio.git"
+  },
+  "homepage": "https://github.com/furkan3152/ringio#readme",
+  "engines": {
+    "node": "20.19.4"
+  },
+  "scripts": {
+    "dev": "npm --prefix web run dev",
+    "lint": "npm --prefix web run lint",
+    "typecheck": "npm --prefix web run typecheck",
+    "build": "npm --prefix web run build",
+    "test": "npm run test:web && npm run test:program",
+    "test:web": "npm --prefix web test",
+    "test:program": "cargo test -p ringio",
+    "format:program": "cargo fmt --all -- --check",
+    "clippy:program": "cargo clippy -p ringio --all-targets -- -D warnings",
+    "check": "npm run lint && npm run typecheck && npm run test:web && npm run build && npm run format:program && npm run test:program && npm run clippy:program"
+  }
+}
