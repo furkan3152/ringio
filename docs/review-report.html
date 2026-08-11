@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Ringio source review — 2026-08-11</title>
+  <style>
+    :root{color-scheme:dark;--ink:#171713;--paper:#f5f0e5;--red:#f25549;--blue:#67a7e8;--yellow:#f4ca45;--line:#6f6b61}
+    *{box-sizing:border-box}body{margin:0;background:var(--ink);color:var(--paper);font:16px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
+    main{width:min(1100px,calc(100% - 32px));margin:32px auto 72px;border:1px solid var(--paper)}
+    header,section{padding:28px;border-bottom:1px solid var(--line)}h1,h2,p{margin-top:0}h1{font:800 clamp(34px,7vw,76px)/.95 Arial,sans-serif;max-width:850px}h2{font:800 28px/1 Arial,sans-serif}
+    .tag{display:inline-block;background:var(--yellow);color:var(--ink);padding:6px 10px;font-weight:800}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.score,.finding,.evidence{border:1px solid var(--line);padding:18px}.score strong{display:block;font:800 48px/1 Arial,sans-serif;color:var(--red)}
+    .finding{margin:12px 0}.finding h3{margin:0 0 8px;color:var(--yellow)}.resolved{border-left:8px solid var(--blue)}.open{border-left:8px solid var(--red)}code{color:var(--blue)}ul{padding-left:20px}.small{color:#c8c2b6;font-size:13px}
+    @media(max-width:760px){.grid{grid-template-columns:1fr}header,section{padding:20px}}
+  </style>
+</head>
+<body><main>
+  <header><span class="tag">SOURCE REVIEW · 2026-08-12</span><h1>Ringio completed a funded devnet lifecycle; adversarial coverage remains.</h1><p>No P0 signer, ownership, PDA, unchecked-value-math, reinitialization, or privileged vault-withdraw issue was found in the checked-in Anchor source. Mainnet readiness remains false because exhaustive CPI coverage and independent review do not exist.</p></header>
+  <section><h2>Scores</h2><div class="grid"><div class="score"><span>Security</span><strong>B</strong><small>P0 source checks clean; adversarial integration/fuzzing pending</small></div><div class="score"><span>Quality</span><strong>B+</strong><small>Funded devnet proof, bounded APIs, honest UI boundary</small></div><div class="score"><span>Mainnet</span><strong>NO</strong><small>Independent audit and exhaustive integration pending</small></div></div></section>
+  <section><h2>Resolved during review</h2><article class="finding resolved"><h3>P1 · Pause/default-policy override</h3><p>The earlier resume logic granted a fresh grace/window and could revive a boundary that had already expired. The fix replaced it with <code>base_deadline + (total_paused_seconds - phase_pause_snapshot)</code>. Only completed real pause intervals accumulate; same-state calls add zero; reversed clocks and overflow fail closed.</p><p><b>Evidence:</b> post-expiry, multiple-pause, snapshot, overflow, and state-transition tests now pass in the 16-test Rust suite.</p></article></section>
+  <section><h2>Open production gates</h2>
+    <article class="finding open"><h3>High · Non-exhaustive transaction-level custody proof</h3><p>The exact SBF artifact is deployed and a funded two-round devnet run exercised direct contributions, payouts, pre-grace rejection, post-grace collateral coverage, and terminal conservation. Crafted-account substitution, rollback, repeated-failure, and maximum-roster paths are not exhaustively tested. <b>Fix:</b> add Anchor/LiteSVM integration tests for every value path and malicious account substitution before production custody.</p></article>
+    <article class="finding open"><h3>Medium · Authority governance incomplete</h3><p>A dedicated repo-external devnet authority controls the deployed upgrade and pause surfaces; public program/config evidence exists, but multisig handoff remains open. <b>Fix:</b> publish the retained-authority assumption, transfer to reviewed multisigs, and rehearse pause/refund recovery before a production-value pilot.</p></article>
+    <article class="finding open"><h3>Medium · AI operations remain pilot-grade</h3><p>Economic records are decoded directly from confirmed devnet accounts and no static runtime catalog remains, but descriptive metadata is absent and the limiter is process-local. <b>Fix:</b> bind signed/versioned metadata to Group PDAs; add a durable distributed limiter, provider budgets, alerts, and key rotation before public paid-key traffic.</p></article>
+    <article class="finding open"><h3>Low · Maximum-roster compute is unprofiled</h3><p>The 32-member deterministic ordering path is bounded but O(N²). <b>Fix:</b> measure SBF compute/stack at the maximum roster and optimize or lower the cap only from measured results.</p></article>
+  </section>
+  <section><h2>Executed evidence</h2><div class="grid"><div class="evidence"><b>Anchor / SBF</b><ul><li><code>cargo fmt --check</code></li><li>16/16 tests</li><li>Clippy, warnings denied</li><li>IDL + SBF build</li><li>Local/deployed byte hash match</li></ul></div><div class="evidence"><b>Web / AI</b><ul><li>ESLint + TypeScript</li><li>17/17 duration/matcher/privacy/decoder tests</li><li>Next 16.3 production build</li><li><code>npm audit</code>: 0 reported</li></ul></div><div class="evidence"><b>Devnet runtime</b><ul><li>Program deploy + config</li><li>Funded Circle-USDC lifecycle</li><li>Independent keeper/default cover</li><li>Terminal vault/account conservation</li></ul></div></div><p class="small">Not executed: exhaustive LiteSVM/crafted-account coverage, live OpenRouter provider response, Trident/Surfpool/Fender/QEDGen, and independent audit. The public devnet lifecycle is verified; it is not a mainnet-readiness claim.</p></section>
+</main></body></html>

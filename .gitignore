@@ -1,0 +1,43 @@
+# JavaScript
+node_modules/
+.next/
+out/
+npm-debug.log*
+
+# Grant evidence is attached privately; do not publish conversation transcripts
+claude-session.jsonl
+codex-session.jsonl
+
+# Anchor / Rust
+target/
+.anchor/
+test-ledger/
+
+# Local configuration
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Generated keys and wallets — never commit these
+*.json.keypair
+*.keypair.json
+*-keypair.json
+*keypair*.json
+e2e-state*.json
+id.json
+deploy-keypair.json
+*.pem
+*.key
+*.secret
+
+# Local agent/security working state
+.superstack/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Brand previews are local-only
+.brand-preview/

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "helius": {
+      "command": "npx",
+      "args": ["-y", "helius-mcp@2.1.0"],
+      "env": {
+        "HELIUS_NETWORK": "devnet"
+      }
+    }
+  }
+}
