@@ -2,7 +2,7 @@
 
 Submission page: <https://superteam.fun/earn/grants/agentic-engineering>
 
-Verified from the public listing on 2026-08-11: the listing shows a `200 USDG` cheque size and the skill labels `Frontend`, `Blockchain`, `Backend`, and `Content`. The page does not publicly expose scoring criteria in the visible listing, so this draft does not invent any. Recheck the live form before submission.
+Verified from the public listing on 2026-08-12: the grant is open globally for a fixed `200 USDG`, paid 50% after approval/KYC and 50% after a working Solana product ships. The listing asks for a clear, practical scope and Solana integration; the second-tranche review requires the product URL, GitHub repository, and AI subscription receipt(s) totalling $200. Its custom question asks for the Claude/Codex response files via a Drive link. This draft does not invent unpublished scoring criteria.
 
 Every bracketed item is intentionally unverified and must be completed by the applicant. Statements in the “planned” sections are milestones, not shipped traction.
 
@@ -18,11 +18,11 @@ Every bracketed item is intentionally unverified and must be completed by the ap
 
 **Telegram username**
 
-> [t.me/USERNAME]
+> [t.me/akdogancoin](https://t.me/akdogancoin)
 
 **Solana wallet address**
 
-> [WALLET_ADDRESS]
+> `D2Ts7yCiVjedo6uwqpkM44QA8J45NdVU1J3k5m6iWtvm`
 
 ## Step 2 — Details
 
@@ -48,9 +48,9 @@ Every bracketed item is intentionally unverified and must be completed by the ap
 
 **Public proof of work**
 
-> Repository: [github.com/furkan3152/ringio](https://github.com/furkan3152/ringio)
+> Repository: [github.com/furkan3152/ringio](https://github.com/furkan3152/ringio). Verify that the final `main` commit is publicly visible before submission.
 >
-> Submission commit: [COMMIT_SHA]
+> Submission commit: use the final publicly visible `main` commit SHA after running the pinned verification suite.
 >
 > Live app: [URL or PENDING]
 >
@@ -60,15 +60,15 @@ Every bracketed item is intentionally unverified and must be completed by the ap
 >
 > Demo video: [URL or PENDING]
 >
-> Verification: [EXACT ANCHOR TEST COMMAND + PASS COUNT], [EXACT FRONTEND LINT/BUILD COMMANDS]
+> Verification: `cargo test -p ringio` — 16/16 passed; `npm --prefix web test` — 17/17 passed; `npm run check` — lint, TypeScript, Next 16 production build, Rust format/tests, and Clippy with warnings denied passed; `npm --prefix web audit --audit-level=moderate` — zero reported vulnerabilities.
 >
-> AI-assisted development transcript: [ATTACHED CODEX/CLAUDE SESSION EXPORT]
+> AI-assisted development transcript: local ignored file `codex-session.jsonl` (current Ringio Codex session, revoked GitHub credential redacted); upload to a public-view Drive folder and paste that link into the custom question.
 
 Do not submit local-only files, mock transaction hashes, a bare deployment with no initialized state, or test results from a different commit as proof of the integrated product.
 
 **Personal X profile**
 
-> [x.com/HANDLE]
+> [x.com/akdogancoin](https://x.com/akdogancoin)
 
 **Personal GitHub profile**
 
@@ -76,7 +76,15 @@ Do not submit local-only files, mock transaction hashes, a bare deployment with 
 
 **Target deadline**
 
-> 2026-09-07 — proposed; applicant must confirm availability and the live form's date/time requirements.
+> 2026-08-18 — final development continues after the grant deadline, but this is the target for the public, browser-signable devnet MVP and evidence package.
+
+**Builder track record**
+
+> **Kletia — flagship project:** I actively maintain [Kletia](https://github.com/furkan3152/Kletia), a network-aware Web3 intent engine and AI-supported superapp infrastructure spanning Base Mainnet and Arc Testnet. A fresh tracked-file measurement found approximately 73,435 source-code lines and 99,079 code/documentation/configuration lines. Its architecture separates network state, intent routing, transaction targets, and safety allowlists instead of presenting cross-chain behavior as one unsafe generic execution path.
+>
+> **Gençtek Technology Summit:** At 18, while still a high-school student, I presented my blockchain work at Gençtek, a technology summit backed by Türkiye's Ministry of National Education. I demonstrated the project directly to senior education-technology and government stakeholders. [Event photo](https://ibb.co/FkLqrFck). The claim that it was the event's first blockchain project is my event experience and is not presented as independently verified third-party reporting.
+>
+> **Additional public work:** [FledgeHub](https://github.com/furkan3152/FledgeHub), an on-chain-gm-style Web3 experiment; [GeniusTest](https://github.com/furkan3152/GeniusTest), an interactive Genius ecosystem testing application; and [GeniusAi](https://github.com/Ahmetdenizyildiz/GeniusAi), an AI-agent ecosystem collaboration hosted under another maintainer's repository.
 
 **Crowdedness / comparable-project evidence, if requested by the live form**
 
@@ -99,25 +107,25 @@ The public listing labels these skills; this table maps concrete work to them wi
 
 Dates are a proposed execution plan, not claims of completion.
 
-**Milestone 1 — Program invariants and local adversarial tests (target 2026-08-17)**
+**Milestone 1 — Browser-signable protocol client (target 2026-08-14)**
 
-> Finalize the Anchor account/instruction surface; test roster immutability, commitment/reveal checks, exact collateral math, mint/account substitution, duplicate contribution, premature default coverage, double settlement, pause, cancellation, and refunds. Publish the IDL and exact test results at a pinned commit.
+> Wire reviewed Wallet Adapter transaction builders for create/invite/join/reveal/collateral/contribution and deterministic permissionless cranks. Every flow will simulate first, show exact mint/amount/accounts, require the correct wallet signature, and surface rejection/expiry states without fake success.
 
-**Milestone 2 — Program-connected devnet UX (target 2026-08-24)**
+**Milestone 2 — Multi-wallet funded lifecycle and adversarial test (target 2026-08-16)**
 
-> Build on the completed devnet program/config/Group deployment and direct account decoding: add wallet-approved create/join/reveal/collateral/contribution transactions and show explorer-linked settlement. Preserve public-code versus invite authorization boundaries plus explicit RPC, simulation, rejection, and expiry states.
+> Fund and operate 5–10 isolated devnet wallets, complete at least one five-member circle from creation through every payout, and exercise duplicate contribution, premature coverage, eligible post-payout default, pre-payout default/unwind, refund, wrong account/mint, and keeper paths. Reconcile participant balances and both PDA vaults after every terminal state.
 
-**Milestone 3 — Default demo and permissionless crank (target 2026-08-31)**
+**Milestone 3 — AI discovery and hosted devnet product (target 2026-08-17)**
 
-> Complete a four-member circle with at least one eligible post-payout default covered from the aggregate collateral vault and charged to the correct member ledger by an unrelated keeper wallet. Publish transaction links and show Protection Ratio separately from collection health.
+> Deploy the Next.js product with a production server-only OpenRouter key, dedicated/rate-limited RPC, deterministic fallback, privacy guardrails, and public-code lookup. Publish a concise demo covering group discovery, wallet signing, live account state, Protection Ratio, and an explorer-linked default cover.
 
-**Milestone 4 — Public evidence package and pilot readiness (target 2026-09-07)**
+**Milestone 4 — Public release evidence (target 2026-08-18)**
 
-> Publish the application, program/client source, architecture and threat model, reproducible devnet runbook, short demo video, verified build/test evidence, upgrade-authority disclosure, and a capped-value pilot checklist. Add signed/versioned group metadata, an indexer-backed public catalog, durable rate limiting, budget alerts, and matcher-quality evaluation. Specify the transaction-capable agent manifest and contribution-passport formats as roadmap without presenting them as deployed.
+> Publish the source, live app, architecture/threat model, reproducible runbook, pinned test output, completed-circle transaction links, short demo video, retained-authority disclosure, and a capped-value pilot checklist. Clearly separate the August 18 deliverable from post-grant work such as mainnet review, multisig governance, indexer scale, and the opt-in contribution passport.
 
 **Primary KPI (proposed)**
 
-> One explorer-verifiable four-member devnet circle completes all four rounds, with 100% of scheduled pot amounts settled to the fixed recipients and at least one eligible missed post-payout contribution replaced from aggregate collateral and charged to the correct member ledger by a permissionless keeper.
+> By 2026-08-18, one explorer-verifiable circle with at least five independently funded devnet wallets completes every round through browser-approved transactions, with 100% of scheduled pot amounts settled to the fixed recipients, at least one eligible missed post-payout contribution replaced from the correct member's collateral by an unrelated keeper, and zero unexplained terminal balance across both program vaults.
 
 This KPI measures the MVP's core mechanism. It is not user traction. If the form asks for a market KPI, provide a separately evidenced pilot target rather than relabelling this as adoption.
 
@@ -140,8 +148,8 @@ This KPI measures the MVP's core mechanism. It is not user traction. If the form
 - [ ] Replace every bracketed placeholder.
 - [ ] Re-open the live grant form and mirror its current field names and limits.
 - [ ] Pin one public commit and run all reported commands on that commit.
-- [ ] Export and attach the AI session transcript; this docs-only task intentionally did not write a transcript into the project root.
-- [x] Add real devnet program/config/Group addresses and explorer signatures; keep untested lifecycle signatures explicitly open.
+- [x] Export the current Codex session to ignored `codex-session.jsonl` and verify credential redaction; upload it to Drive before submission.
+- [x] Add real devnet program/config/completed-Group addresses plus contribution, payout, and default-cover signatures.
 - [ ] Add the live app and video, with mock/devnet mode visibly distinguished.
 - [ ] Disclose upgrade and pause authorities.
 - [ ] Do not claim mainnet readiness, an audit, traction, real USDC, or a deployed roadmap feature without evidence.
