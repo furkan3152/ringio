@@ -1,6 +1,6 @@
 # Ringio Demo Script
 
-This script is designed for a 6–8 minute reviewer demo. Never present mocked data as devnet state. Ringio renders only decoded devnet Group/Member/vault state and shows empty/error when none can be verified. The program, config, and first Group values below are explorer-verifiable; later lifecycle placeholders remain explicitly untested.
+This script is designed for a 6–8 minute reviewer demo. Never present mocked data as devnet state. Ringio renders only decoded devnet Group/Member/vault state and shows empty/error when none can be verified. The program, config, first forming Group, and separate funded two-member lifecycle below are explorer-verifiable; the planned browser-signed four-member demo remains explicitly unshipped.
 
 ## Demo promise
 
@@ -8,7 +8,7 @@ Show one idea clearly: Ringio turns a familiar savings circle into an inspectabl
 
 Do not claim that collateral guarantees liveness. A pre-payout member can still stall the MVP.
 
-Current repository cut: the Bauhaus UI, wallet connection, deterministic/optional-AI discovery over direct devnet account reads, non-signing previews, SBF/IDL build, public program/config initialization, real Group creation, and read-only agent manifest are implemented. Scene 2 can use live state. The browser-side transaction actions in Scenes 3–7 remain previews; only the first `create_group` has external-script explorer evidence.
+Current repository cut: the Bauhaus UI, wallet connection, deterministic/optional-AI discovery over direct devnet account reads, non-signing previews, SBF/IDL build, public program/config initialization, real Group creation, and read-only agent manifest are implemented. A separate external harness completed a funded two-member devnet lifecycle, including permissionless payouts and post-grace collateral coverage. Scene 2 can use live state, but the browser-side transaction actions in Scenes 3–7 remain previews and must not be presented as browser-signed execution.
 
 ## Preflight checklist
 
@@ -125,7 +125,7 @@ Suggested narration:
 
 > The collateral is compensatory, not a fine. It replaces the missing contribution in the pot. The event history preserves the distinction, which becomes the raw evidence for a future opt-in contribution passport.
 
-If the on-chain default path is not deployed and verified, present this as an interaction prototype and do not imply that the transfers occurred.
+The two-member external-harness default path is explorer-verifiable, but the four-member browser flow in this scene is not. Present the existing signatures as recorded proof and the browser interaction as a prototype until a fresh browser-signed run exists.
 
 ## Scene 8 — Agentic extension, with a safety boundary (6:05–6:40)
 

@@ -6,9 +6,12 @@ Group.contribution_amount`, `r = Member.payout_rank`, and `q =
 Group.current_round`.
 
 This file is an audit checklist, not an audit report. The host tests exercise the
-pure arithmetic and ordering properties described below. SBF execution,
-transaction-level CPI behavior, compute limits, account-rent behavior, and a
-deployed cluster were not tested in this implementation pass.
+pure arithmetic and ordering properties described below. The generated IDL and
+SBF artifact build successfully, and one external-script, two-member devnet
+lifecycle exercised funded contributions, payouts, post-grace collateral cover,
+and terminal vault reconciliation. That bounded run does not establish exhaustive
+transaction-level CPI safety, compute limits, account-rent behavior, or audit
+readiness.
 
 ## State and identity
 
@@ -116,11 +119,14 @@ account bytes so the serialized account allocations remain unchanged.
 - No oracle is used because collateral and contributions use the same mint.
 - Invite/Member rent is not reclaimed in the MVP; token principal refunds are
   independent of account rent.
-- No generated IDL or client was produced here. Any transaction builder and UI
-  copy must be reconciled against the generated Anchor 0.32.1 IDL before use.
+- Anchor 0.32.1 generated the local IDL and TypeScript client surface under the
+  ignored `target/` tree. Browser value-moving builders are still unwired, so UI
+  financial actions remain labelled non-signing previews.
 - QEDGen, Trident, Surfpool, LiteSVM transaction tests, and
-  `solana-fender-mcp` were unavailable/not run in this pass. No independent
-  audit was performed.
-- `cargo test` is a host build only. SBF compilation, validator integration,
-  compute-unit profiling, devnet deployment, and live USDC movement remain
-  unverified. Do not infer deployment readiness from the host tests.
+  `solana-fender-mcp` were unavailable/not run in the verified release. No
+  independent audit was performed.
+- `cargo test` remains a host build. SBF compilation, devnet deployment, and one
+  funded lifecycle against Circle devnet USDC were verified separately; crafted
+  account substitution, rollback, maximum-roster compute profiling, repeated
+  defaults, and broad validator integration remain unverified. Do not infer
+  mainnet readiness from one devnet scenario.
