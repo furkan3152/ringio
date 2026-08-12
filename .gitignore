@@ -7,6 +7,7 @@ npm-debug.log*
 # Grant evidence is attached privately; do not publish conversation transcripts
 claude-session.jsonl
 codex-session.jsonl
+docs/grant-response-preview.md
 
 # Anchor / Rust
 target/

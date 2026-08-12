@@ -105,7 +105,7 @@ The full toolchain and devnet sequence are documented in `docs/devnet-runbook.md
 ```text
 programs/ringio/    Anchor program, state machine, errors, invariant tests
 web/                Next.js App Router dashboard and wallet UX
-docs/               Architecture, AI matching, threat model, demo, deployment, grant draft
+docs/               Architecture, AI matching, threat model, demo, deployment, grant evidence
 .superstack/        Machine-readable build decisions and verification status
 brand.md            Ringio's provisional visual and voice system
 ```
@@ -116,4 +116,4 @@ Ringio uses one immutable settlement mint per circle; there is no client-supplie
 
 ## Grant
 
-This project is being prepared for Superteam's [Agentic Engineering Grant](https://superteam.fun/earn/grants/agentic-engineering). `docs/grant-application.md` keeps verified proof of work separate from placeholders that require the founder's Telegram, X, wallet, public repository, and deployed demo links.
+This project is being prepared for Superteam's [Agentic Engineering Grant](https://superteam.fun/earn/grants/agentic-engineering). `docs/grant-application.md` keeps verified current evidence separate from the August 18 grant-funded milestones. Personal form fields and the applicant wallet are intentionally not duplicated in the repository.
