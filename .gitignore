@@ -4,8 +4,6 @@ node_modules/
 out/
 npm-debug.log*
 
-# Grant evidence is attached privately; do not publish conversation transcripts
-
 # Anchor / Rust
 target/
 .anchor/
