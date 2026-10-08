@@ -2,7 +2,7 @@
 
 This runbook separates five claims:
 
-1. **Frontend read layer:** the UI renders decoded devnet Group/Member/vault state and fails empty/error rather than substituting mock rows; unwired actions remain labelled non-signing previews.
+1. **Frontend layer:** the UI renders decoded Group/Member/Invite/vault state for the selected cluster, fails empty/error rather than substituting mock rows, and builds, simulates, and wallet-signs every Ringio instruction (`npm --prefix web run test:svm` runs those builders against the deployed bytecode). Mainnet-beta and testnet deployment is covered in `docs/mainnet-deployment.md`.
 2. **Rust unit verification:** pure state/math tests pass; this does not execute token CPIs.
 3. **Local integration verification:** Anchor tests pass against a local validator and exercise real account constraints/CPIs.
 4. **Devnet integration:** the UI reads a deployed program and submitted transactions are explorer-verifiable.

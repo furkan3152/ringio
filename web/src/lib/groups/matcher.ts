@@ -44,7 +44,8 @@ export type GroupMatch = {
   memberSlots: PublicGroup["memberSlots"];
   postPayoutCollateral: PublicGroup["postPayoutCollateral"];
   interests: readonly string[];
-  listingSource: "solana-devnet";
+  listingSource: PublicGroup["listingSource"];
+  accountAddress: string;
 };
 
 export type DeterministicMatchResult = {
@@ -508,6 +509,7 @@ function scoreGroup(group: PublicGroup, preferences: MatchPreferences): GroupMat
     postPayoutCollateral: group.postPayoutCollateral,
     interests: group.interests,
     listingSource: group.listingSource,
+    accountAddress: group.accountAddress,
   };
 }
 
@@ -534,8 +536,8 @@ function buildAnswer(
   if (!top) {
     const noMatches =
       preferences.locale === "tr"
-        ? "Şu anda devnet üzerinde katılıma uygun gerçek bir grup yok. Daha sonra tekrar dene veya yeni bir grup oluştur."
-        : "There are no eligible on-chain devnet groups right now. Try again later or create a new group.";
+        ? "Şu anda bu ağda katılıma uygun gerçek bir grup yok. Daha sonra tekrar dene veya yeni bir grup oluştur."
+        : "There are no eligible on-chain groups on this network right now. Try again later or create a new group.";
     return { answer: unavailableNotice ? `${unavailableNotice} ${noMatches}` : noMatches, notice: unavailableNotice };
   }
 

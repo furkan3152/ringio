@@ -28,15 +28,33 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
-      - run: npm audit --audit-level=high
+      # Shipped (production) dependencies must be free of high/critical advisories.
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
         env:
-          NEXT_PUBLIC_SOLANA_CLUSTER: devnet
-          NEXT_PUBLIC_SOLANA_RPC_URL: https://api.devnet.solana.com
-          NEXT_PUBLIC_USDC_MINT: 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
+          NEXT_PUBLIC_DEFAULT_CLUSTER: devnet
+
+  svm:
+    name: Client builders vs deployed bytecode (LiteSVM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20.19.4
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      # Downloads the devnet program bytecode (read-only) and runs the full
+      # create → payout → default → refund lifecycle with the UI's instruction builders.
+      - run: npm run test:svm
 
   program:
     name: Program format and host tests

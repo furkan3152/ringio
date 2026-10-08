@@ -1,6 +1,6 @@
 # Ringio MVP Architecture
 
-Status: design contract synchronized to the Anchor source and locally generated IDL for the devnet MVP. Program ID `JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy` is deployed on Solana devnet and synchronized across source, Anchor config, generated IDL, and the frontend. Its config PDA is initialized and a funded two-member Group completed two rounds, including one post-payout default covered from collateral. The dashboard reads deployed accounts, while user-facing value-moving actions remain non-signing previews until wallet transaction builders are wired. Features explicitly marked **Roadmap** are not part of the implemented MVP.
+Status: design contract synchronized to the Anchor source and locally generated IDL for the devnet MVP. Program ID `JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy` is deployed on Solana devnet and synchronized across source, Anchor config, generated IDL, and the frontend. Its config PDA is initialized and a funded two-member Group completed two rounds, including one post-payout default covered from collateral. The web client now builds, simulates, and wallet-signs every user-facing instruction (create, invite, join, reveal, finalize, collateral, activate, contribute, settle, cover, abort, cancel, and both refunds) on any configured cluster — mainnet-beta, devnet, or testnet — and those builders are executed against the deployed devnet bytecode in LiteSVM. Mainnet and testnet still require a program deployment and config initialization (see `docs/mainnet-deployment.md`). Features explicitly marked **Roadmap** are not part of the implemented MVP.
 
 ## 1. Product and security boundary
 
@@ -41,7 +41,7 @@ flowchart LR
     V -->|fixed round payout| R[Recipient-owned token account]
     CV -->|missed post-payout contribution| V
     UI[Next.js client] -->|confirmed account reads| P
-    UI -. planned signed transactions .-> P
+    UI -->|simulated, wallet-signed transactions| P
     IX[Optional read indexer] -. events/accounts .-> UI
     P -. events .-> IX
     P -->|eligible decoded Groups| AI[Rules matcher + optional GPT-4o]
@@ -50,7 +50,7 @@ flowchart LR
 
 Solana has no background execution. “Automatic” means that any wallet or keeper can submit a valid crank transaction. The program independently checks every deadline, account, amount, and destination; a keeper has no discretion over who receives funds.
 
-The checked-in web app connects wallets and decodes deployed Ringio Group, Member, mint, and SPL-vault accounts through confirmed devnet RPC reads. It does not yet build, simulate, sign, or submit value-moving Ringio instructions; those controls are labelled non-signing previews.
+The checked-in web app connects Wallet Standard wallets and decodes Group, Member, Invite, mint, and SPL-vault accounts through confirmed RPC reads on the selected cluster. `web/src/lib/ringio/` hand-encodes every Anchor instruction from the account structs in `lib.rs`; `web/src/hooks/use-ringio-tx.ts` simulates each transaction before any wallet prompt (surfacing decoded program errors), sizes the compute budget, adds a priority fee only on mainnet, requires a one-time risk acknowledgement before the first mainnet signature, and confirms by polling signature status. A per-wallet action planner (`lifecycle.ts`) mirrors the program's state and deadline checks so the UI only offers transitions the program will accept; the program remains the authority.
 
 ## 4. Lifecycle state machine
 
@@ -180,7 +180,7 @@ The bounded MVP roster is `2..=32`. `Group` stores fixed arrays for the canonica
 
 ### Client period entry
 
-`Group.period_seconds` is the only on-chain cadence source of truth. The create-circle client offers Weekly (7 days) and Monthly (exactly 30 days) presets, plus a custom positive integer in minutes, hours, days, or weeks. Every choice is converted to an exact integer number of seconds before an instruction is built; the client enforces the same upper bound as the program (`366 days`) and displays the resulting duration in the economics preview. A calendar-month interpretation is intentionally avoided because it would be ambiguous in an immutable seconds-based term. Client validation is only an early UX check: `create_group` must continue to reject zero, overflow, and out-of-range values on-chain.
+`Group.period_seconds` is the only on-chain cadence source of truth. The create-circle client offers Weekly (7 days), Every 2 weeks (14 days), and Monthly (exactly 30 days) presets, plus a custom positive integer in minutes, hours, days, or weeks. Every choice is converted to an exact integer number of seconds before an instruction is built; the client enforces the same upper bound as the program (`366 days`) and displays the resulting duration in the economics preview. A calendar-month interpretation is intentionally avoided because it would be ambiguous in an immutable seconds-based term. Client validation is only an early UX check: `create_group` must continue to reject zero, overflow, and out-of-range values on-chain.
 
 ## 8. Instruction surface
 
@@ -235,11 +235,11 @@ Adversaries: a malicious creator, one or more colluding members, a keeper, a com
 | Pre-payout member stops paying | invite-only membership; visible deadline; permissionless abort and failed-round refunds | Group terminates `Defaulted`; promised future pots are not completed; replacement/insurance is roadmap |
 | Creator changes terms or recipient | immutable terms from group creation; deterministic order after full reveal | Creator can refuse to progress before permissionless stages unless timeout/cancel paths are complete |
 | Duplicate member or contribution | PDA uniqueness and per-member round marker | Wallet-level uniqueness does not prevent one human controlling many wallets |
-| Fake USDC or wrong token account | immutable group mint plus token mint/owner/authority checks | The program accepts a standard SPL mint; it does not prove that mint is official USDC. The client must match the configured allowlist and show the address |
+| Fake USDC or wrong token account | immutable group mint plus token mint/owner/authority checks; the client creates circles only with the cluster's configured mint and badges every circle as verified USDC or an unverified token | The program accepts a standard SPL mint; it does not prove that mint is official USDC. Circles created outside this client can use any mint |
 | Keeper steals or front-runs payout | permissionless call with fixed amount and scheduled token-account owner | A keeper may choose among correct-mint accounts owned by that recipient, but cannot pay itself; it can censor only by not acting and anyone else can call |
 | Order manipulation | commitments frozen before reveals; canonical deterministic ordering | Last-revealer abort/griefing remains; VRF is roadmap |
 | Premature default cover | on-chain deadline, unpaid marker, post-payout eligibility | Cluster time is approximate; periods must tolerate clock variance |
-| Malicious/stale frontend or RPC | explicit demo labels now; client-side account decoding, simulation, and transaction summaries are required before real signing is enabled | A user can still approve a malicious transaction; verify program ID and explorer data |
+| Malicious/stale frontend or RPC | client-side account decoding; every transaction is simulated before the wallet prompt; network, asset mint, and amount are shown next to every signing action; mainnet requires an explicit risk acknowledgement | A user can still approve a malicious transaction from a compromised frontend; verify program ID and explorer data |
 | Arithmetic/account substitution | checked arithmetic, caps, PDA and `has_one`/mint/owner checks | Requires tests and independent review; documentation is not an audit |
 | Token-2022 transfer hooks/fees | standard SPL Token mint only in MVP | Token-2022 support needs extension-aware accounting before enablement |
 | Pause/admin abuse | pause cannot transfer/reorder; failed-round and collateral refunds remain available; cumulative accounting freezes every phase by only its actual paused duration | The authority can delay liveness indefinitely while paused, but cannot revive an expired boundary or add unpaused time. Pause and upgrade authorities remain disclosed devnet trust assumptions |
@@ -253,7 +253,7 @@ Adversaries: a malicious creator, one or more colluding members, a keeper, a com
 
 `finalize_order`, `activate_group`, `cover_default`, `settle_round`, and `abort_uncovered_round` are keeper-friendly because they are deterministic and permissionless. A keeper observes accounts/events, simulates the exact instruction, and submits only when the program says the transition is valid. It never holds member seed phrases or chooses payout destinations.
 
-**Implemented discovery manifest:** `GET /api/agent/manifest` returns project/version, cluster, configured program ID, `simulation` when the environment value is absent or `read-only` when it is present, a small supported-action list, the narrow collateral guarantee/exclusions, and `signableTransactions: false`. The mode reflects configuration only; it is not RPC/deployment evidence. This is capability metadata: it returns no transaction, mutates no state, and does not claim Solana Actions/Blinks compliance.
+**Implemented discovery manifest:** `GET /api/agent/manifest` returns project/version, the enabled clusters with their program IDs and asset mints, the browser-signed transaction mode, a small supported-action list, the narrow collateral guarantee/exclusions, and `signableTransactions: false`. It reflects configuration only; it is not RPC/deployment evidence. This is capability metadata: it returns no transaction, mutates no state, and does not claim Solana Actions/Blinks compliance.
 
 **Roadmap — transaction-capable action manifest:** add the reviewed IDL hash, required accounts/signers, preconditions, raw-amount semantics, expected postconditions, simulation response, and human-confirmation policy after the transaction client exists. `join_group`, `reveal_secret`, `post_collateral`, and `contribute` remain explicit user-signature actions. A bounded keeper may submit only permissionless cranks.
 
@@ -277,13 +277,13 @@ Repository snapshot on 2026-08-12: Rust 1.89 formatting, 16/16 unit tests, clipp
 
 | Capability | Checked in now | Roadmap / not implied |
 | --- | --- | --- |
-| Invite-only fixed roster | Anchor source, generated IDL, state/unit checks, funded two-member devnet completion | Wallet join builder, identity verification, replacement membership |
+| Invite-only fixed roster | Anchor source, generated IDL, state/unit checks, funded two-member devnet completion, browser invite/join builders | Identity verification, replacement membership |
 | Group discovery | Direct devnet Group decoding with PDA-derived public codes; deterministic matcher; optional OpenRouter explanation; no mock fallback | Signed creator metadata, scalable indexer, moderation, production rate limiting |
-| Commit-reveal order | Deterministic deployed instruction, pure ordering tests, external CSPRNG secrets, funded lifecycle evidence | Browser wallet ceremony, VRF/liveness-resistant randomness |
+| Commit-reveal order | Deterministic deployed instruction, pure ordering tests, browser ceremony with wallet-signature-derived secrets (local backup, on-chain commitment check before reveal) | VRF/liveness-resistant randomness |
 | SPL contributions and PDA vaults | Classic Token Program constraints, conservation tests, funded direct contributions and payouts, terminal zero-vault assertions | Exhaustive malicious-account CPI tests, Token-2022, yield-bearing vaults, swaps |
 | Rank-aware collateral and Protection Ratio | Aggregate ledger plus funded pre-grace rejection and post-grace default coverage on devnet | Insurance fund, credit underwriting, liquidation |
 | Permissionless round/default crank | Independent keeper finalized order, activated, covered default, and settled payouts | Hosted keeper, monitoring/SLA, autonomous custody |
-| Dashboard | Real Group/Member/vault reads, round/payer/recipient/pot/protection UI and wallet connection; no mock fallback | Program transaction builders, production indexer, notifications |
+| Dashboard | Real Group/Member/Invite/vault reads on mainnet-beta, devnet, or testnet; per-wallet action planner; simulated, wallet-signed transactions for every user and crank instruction; LiteSVM lifecycle tests against deployed bytecode | Production indexer, notifications, hosted keeper |
 | Contribution evidence | Completed funded devnet Group with direct versus collateral resolution in member state | Indexed history, portable Trust Passport, cross-protocol attestations |
 | Agent capability metadata | Read-only `/api/agent/manifest`; no signable transactions | Transaction-capable manifest, reviewed IDL binding, and delegated policies |
 

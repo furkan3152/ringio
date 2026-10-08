@@ -6,6 +6,7 @@ export type GroupCadence = "weekly" | "biweekly" | "monthly";
 export type GroupLanguage = "tr" | "en";
 export type GroupLocationMode = "remote" | "in-person" | "hybrid" | "unspecified";
 export type GroupEnrollmentStatus = "accepting-members" | "full" | "closed";
+export type ListingSource = "solana-mainnet-beta" | "solana-devnet" | "solana-testnet";
 
 export type PublicGroup = {
   code: string;
@@ -37,7 +38,7 @@ export type PublicGroup = {
   };
   interests: readonly string[];
   enrollmentStatus: GroupEnrollmentStatus;
-  listingSource: "solana-devnet";
+  listingSource: ListingSource;
 };
 
 export function groupCodeFromAddress(address: string): string {
@@ -101,7 +102,7 @@ export function validatePublicGroupCatalog(
       errors.push(`Unsupported collateral coverage for ${group.code}`);
     }
     if (Number.isNaN(Date.parse(group.start.isoDate))) errors.push(`Invalid start date for ${group.code}`);
-    if (group.listingSource !== "solana-devnet") errors.push(`Non-chain listing source for ${group.code}`);
+    if (!group.listingSource.startsWith("solana-")) errors.push(`Non-chain listing source for ${group.code}`);
   }
 
   return errors;
