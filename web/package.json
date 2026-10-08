@@ -8,18 +8,22 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/groups/*.test.ts",
+    "test": "tsx --test src/lib/groups/*.test.ts src/lib/ringio/*.test.ts",
     "initialize:config": "tsx scripts/initialize-config.ts",
     "smoke:create-group": "tsx scripts/create-smoke-group.ts",
-    "e2e:devnet": "tsx scripts/devnet-e2e.ts"
+    "e2e:devnet": "tsx scripts/devnet-e2e.ts",
+    "program:fetch": "tsx scripts/fetch-program.ts",
+    "test:svm": "tsx scripts/fetch-program.ts --if-missing && tsx --test svm/*.test.ts",
+    "network:status": "tsx scripts/network-status.ts"
   },
   "dependencies": {
     "@solana/wallet-adapter-react": "^0.15.39",
     "@solana/wallet-adapter-react-ui": "^0.9.39",
     "@solana/web3.js": "^1.98.4",
     "bs58": "6.0.0",
+    "buffer": "6.0.3",
     "lucide-react": "^1.31.0",
-    "next": "^16.3.0",
+    "next": "16.3.8",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },
@@ -31,7 +35,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "^16.3.0",
+    "eslint-config-next": "16.3.8",
+    "litesvm": "1.4.1",
     "tailwindcss": "^4",
     "tsx": "^4.23.12",
     "typescript": "^5"
@@ -51,6 +56,9 @@
     "@wallet-standard/wallet": "1.1.0",
     "jayson": {
       "uuid": "^11.1.1"
+    },
+    "litesvm": {
+      "@solana/kit": "8.4.0"
     }
   }
 }
