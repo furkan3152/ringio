@@ -4,14 +4,23 @@ Ringio is pre-audit MVP software. Do not use it with assets you cannot afford to
 
 ## Supported environment
 
-Only Solana devnet is supported until all of the following are complete:
+The web client can target Solana **mainnet-beta, devnet, and testnet**. The
+program is deployed on devnet; deploying it to mainnet-beta or testnet is an
+operator decision documented in `docs/mainnet-deployment.md`. Mainnet use with
+real funds is **not recommended** until all of the following are complete, and
+any mainnet pilot should cap circle amounts:
 
 - an independent program review;
-- adversarial LiteSVM or Mollusk integration coverage;
+- adversarial LiteSVM or Mollusk integration coverage beyond the current lifecycle suite;
 - prolonged state-machine fuzzing;
 - verified SBF builds and reproducible deployment artifacts;
 - upgrade, pause, and emergency authorities transferred to a multisig;
 - a public bug-bounty and disclosure channel.
+
+The client never signs anything on its own: every value-moving action is
+simulated first and then approved in the user's wallet, with the network and
+asset mint shown next to the signing button and a one-time risk
+acknowledgement before the first mainnet signature.
 
 ## Reporting
 

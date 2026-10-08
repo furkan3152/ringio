@@ -1,33 +1,20 @@
 # Ringio web
 
-Next.js 16 + React 19 + Tailwind CSS 4 interface for the Ringio Solana savings-circle MVP.
+Next.js 16 + React 19 client for the Ringio savings-circle program on Solana.
 
-The current web surface includes:
-
-- three responsive functional-Bauhaus views for discovery, circle management, and fund protection;
-- Solana Wallet Adapter connection on devnet;
-- confirmed devnet Group/Member/mint/vault reads with no mock fallback;
-- clearly labelled contribution and create-circle preview states;
-- a privacy-gated AI group matcher with deterministic fallback and optional
-  server-only OpenRouter GPT-4o reranking;
-- read-only group and agent-capability endpoints, exercised against the deployed Ringio program.
-
-No UI control currently builds or signs an Anchor transaction. Keep every
-value-moving interaction labelled as preview/simulation until real transaction
-builders are connected; read-only dashboard facts are live devnet state.
+- **Routes:** `/` (discover, how it works, protection, guide), `/circles` (your circles and invitations), `/circles/[address]` (live circle with the next action for your wallet), `/create` (new circle).
+- **Networks:** mainnet-beta, devnet, and testnet, configured in `src/lib/solana/networks.ts` from `NEXT_PUBLIC_*` variables (see the root `.env.example`).
+- **Transactions:** `src/lib/ringio/instructions.ts` hand-encodes every Anchor instruction; `src/hooks/use-ringio-tx.ts` simulates, budgets, signs, and confirms them; `src/lib/ringio/lifecycle.ts` decides which actions a wallet can take.
+- **Reads:** confirmed RPC reads only (`src/lib/ringio/fetch.ts`); nothing is mocked or stored on a server.
+- **API:** `/api/groups?cluster=…`, `/api/ai/match?cluster=…`, `/api/agent/manifest` (read-only).
 
 ## Run
 
-Use Node 20.19.4 from the repository root:
-
 ```bash
-nvm use
+nvm use                 # Node 20.19.4
 npm --prefix web ci
 npm run dev
 ```
-
-Copy `.env.example` to `.env.local` only when local overrides are needed. An
-OpenRouter key is optional; without it, matching stays deterministic and local.
 
 ## Verify
 
@@ -35,8 +22,7 @@ OpenRouter key is optional; without it, matching stays deterministic and local.
 npm --prefix web run lint
 npm --prefix web run typecheck
 npm --prefix web test
+npm --prefix web run test:svm     # fetches devnet bytecode, runs LiteSVM lifecycle
 npm --prefix web run build
+npm --prefix web run network:status
 ```
-
-See the repository [README](../README.md), [AI matching design](../docs/ai-matching.md),
-and [security policy](../SECURITY.md) for the complete scope and limitations.

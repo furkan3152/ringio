@@ -2,7 +2,7 @@
 
 The canonical brand system is documented in [`../brand.md`](../brand.md).
 
-The implemented direction is functional Bauhaus: warm paper, hard black
-geometry, signal red, informational blue, visible grid, compact grotesk type,
-high-contrast focus states, reduced-motion support, and no decorative claims
-that imply guaranteed safety or returns.
+The implemented direction is "gold ring": dark ink surfaces, a single gold accent,
+Geist Sans for UI and Geist Mono for money and addresses. Design tokens live at the
+top of `src/app/globals.css`; the ring dial (`src/components/ui/ring-dial.tsx`) is the
+signature visual.

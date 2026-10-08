@@ -17,8 +17,9 @@ import {
   validateMatchRequest,
 } from "@/lib/ai/request";
 import { getEligiblePublicGroups } from "@/lib/groups/catalog";
-import { fetchOnchainGroups, RINGIO_PROGRAM_ID } from "@/lib/groups/onchain";
+import { fetchOnchainGroups, ProgramUnavailableError, programIdFor } from "@/lib/groups/onchain";
 import { matchPublicGroups } from "@/lib/groups/matcher";
+import { DEFAULT_CLUSTER, ENABLED_CLUSTERS, parseClusterId, type ClusterId } from "@/lib/solana/networks";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -36,6 +37,12 @@ function rateLimitHeaders(result: RateLimitResult): Record<string, string> {
   };
 }
 
+function requestCluster(request: Request): ClusterId | null {
+  const value = new URL(request.url).searchParams.get("cluster");
+  const cluster = value === null ? DEFAULT_CLUSTER : parseClusterId(value);
+  return cluster && ENABLED_CLUSTERS.includes(cluster) ? cluster : null;
+}
+
 function json(payload: unknown, status = 200, headers: Record<string, string> = {}) {
   return NextResponse.json(payload, {
     status,
@@ -43,16 +50,19 @@ function json(payload: unknown, status = 200, headers: Record<string, string> = 
   });
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const capability = openRouterCapability();
+  const cluster = requestCluster(request);
+  if (!cluster) return json({ code: "INVALID_CLUSTER", message: "Unsupported cluster." }, 400);
   let groups;
   try {
-    groups = await fetchOnchainGroups();
-  } catch {
+    groups = await fetchOnchainGroups(cluster);
+  } catch (caught) {
     return json({
       status: "degraded",
       capability: "onchain-group-discovery",
-      mode: "rpc-unavailable",
+      mode: caught instanceof ProgramUnavailableError ? "program-unavailable" : "rpc-unavailable",
+      cluster,
       groups: 0,
       message: "No mock fallback is enabled.",
     }, 503);
@@ -62,8 +72,9 @@ export async function GET() {
     capability: "onchain-group-discovery",
     mode: capability.configured ? "openrouter-with-deterministic-fallback" : "deterministic",
     catalog: {
-      mode: "solana-devnet",
-      programId: RINGIO_PROGRAM_ID.toBase58(),
+      mode: `solana-${cluster}`,
+      cluster,
+      programId: programIdFor(cluster).toBase58(),
       eligibleGroups: getEligiblePublicGroups(groups).length,
       onchainEnrollment: true,
       groupCodeNotice: "A group code is a public identifier, not authentication or join authorization.",
@@ -85,6 +96,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const rateLimit = consumeAiRateLimit(request);
+  const cluster = requestCluster(request);
   if (!rateLimit.allowed) {
     return json(
       {
@@ -165,18 +177,25 @@ export async function POST(request: Request) {
 
   // Eligibility is resolved locally before any optional model call. Full and
   // closed groups can never enter the model allowlist or the response matches.
+  if (!cluster) {
+    return json({ code: "INVALID_CLUSTER", message: "Unsupported cluster." }, 400, rateLimitHeaders(rateLimit));
+  }
+
   let groups;
   try {
-    groups = await fetchOnchainGroups();
-  } catch {
+    groups = await fetchOnchainGroups(cluster);
+  } catch (caught) {
+    const unavailable = caught instanceof ProgramUnavailableError;
     return json(
       {
-        code: "SOLANA_RPC_UNAVAILABLE",
-        mode: "rpc-unavailable",
-        answer: "Ringio could not verify current devnet groups. No mock recommendations were returned.",
+        code: unavailable ? "PROGRAM_UNAVAILABLE" : "SOLANA_RPC_UNAVAILABLE",
+        mode: unavailable ? "program-unavailable" : "rpc-unavailable",
+        answer: unavailable
+          ? `Ringio is not live on ${cluster} yet, so there are no circles to match. Switch networks to browse live circles.`
+          : `Ringio could not verify current ${cluster} groups. No mock recommendations were returned.`,
         matches: [],
       },
-      503,
+      unavailable ? 200 : 503,
       rateLimitHeaders(rateLimit),
     );
   }
@@ -214,8 +233,9 @@ export async function POST(request: Request) {
       locale: deterministic.locale,
       notice: deterministic.notice,
       requestedCodeStatus: deterministic.requestedCodeStatus,
-      catalogMode: "solana-devnet",
-      programId: RINGIO_PROGRAM_ID.toBase58(),
+      catalogMode: `solana-${cluster}`,
+      cluster,
+      programId: programIdFor(cluster).toBase58(),
       groupCodeNotice: "Public discovery identifier only; never an authentication or invite credential.",
     },
     200,
