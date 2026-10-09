@@ -1,30 +1,10 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
-import {
-  Keypair,
-  LAMPORTS_PER_SOL,
-  PublicKey,
-  Transaction,
-  type TransactionInstruction,
-} from "@solana/web3.js";
-import { address, getTransactionDecoder, lamports, type Address } from "@solana/kit";
-import { FailedTransactionMetadata, LiteSVM } from "litesvm";
+import { Keypair, PublicKey } from "@solana/web3.js";
 
-import {
-  decodeConfig,
-  decodeGroup,
-  decodeMember,
-  decodeTokenAccount,
-  type GroupAccount,
-  type MemberAccount,
-} from "../src/lib/ringio/accounts";
 import { commitmentHash } from "../src/lib/ringio/commitment";
-import { ACCOUNT_DISCRIMINATORS, TOKEN_PROGRAM_ID } from "../src/lib/ringio/constants";
 import {
   abortUncoveredRoundIx,
   activateGroupIx,
@@ -43,189 +23,21 @@ import {
   settleRoundIx,
 } from "../src/lib/ringio/instructions";
 import { collateralRequired, planActions } from "../src/lib/ringio/lifecycle";
-import {
-  associatedTokenAddress,
-  collateralVaultPda,
-  configPda,
-  groupPda,
-  memberPda,
-  potVaultPda,
-} from "../src/lib/ringio/pda";
+import { collateralVaultPda, groupPda, potVaultPda } from "../src/lib/ringio/pda";
+import { createHarness, DAY, DEPLOYED_PROGRAM, LOCAL_PROGRAM, PROGRAM_ID, START, STARTING_BALANCE, type Harness } from "./harness";
 
 /**
- * Executes every client instruction builder against the deployed Ringio
- * bytecode inside LiteSVM. Fetch the binary first with `npm run program:fetch`
- * (or point RINGIO_PROGRAM_SO at a local `anchor build` artifact).
+ * Executes every client instruction builder against a Ringio program binary
+ * inside LiteSVM: the local `cargo build-sbf` artifact when present (or
+ * RINGIO_PROGRAM_SO), otherwise the devnet bytecode from `npm run program:fetch`.
  */
 
-const PROGRAM_ID = new PublicKey("JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy");
-const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const programPath = [
-  process.env.RINGIO_PROGRAM_SO,
-  resolve(webRoot, "../target/deploy/ringio.so"),
-  resolve(webRoot, ".cache/ringio-devnet.so"),
-].find((candidate): candidate is string => Boolean(candidate && existsSync(candidate)));
-
-const START = 1_800_000_000;
-const DAY = 86_400;
+const programPath = LOCAL_PROGRAM ?? DEPLOYED_PROGRAM;
 const CONTRIBUTION = BigInt(25_000_000); // 25 tokens at 6 decimals
-const STARTING_BALANCE = BigInt(1_000_000_000);
-
-type Harness = {
-  svm: LiteSVM;
-  mint: PublicKey;
-  setTime(unix: number): void;
-  send(signers: Keypair[], instructions: TransactionInstruction[]): void;
-  fail(signers: Keypair[], instructions: TransactionInstruction[], expectedCode: number): void;
-  wallet(): Keypair;
-  balance(owner: PublicKey): bigint;
-  vault(address: PublicKey): bigint;
-  group(address: PublicKey): GroupAccount;
-  member(group: PublicKey, wallet: PublicKey): MemberAccount;
-  setPaused(paused: boolean): void;
-  airdrop(key: PublicKey): void;
-};
-
-const decodeTransaction = getTransactionDecoder();
-
-function addr(key: PublicKey): Address {
-  return address(key.toBase58());
-}
-
-/** Reads the custom program error from the instruction error (or Anchor's log line). */
-function errorCode(result: FailedTransactionMetadata): number | null {
-  const err = result.err() as unknown as { err?: () => { code?: unknown } };
-  const code = typeof err.err === "function" ? err.err().code : undefined;
-  if (typeof code === "number") return code;
-  const logged = result.meta().logs().join("\n").match(/Error Number: (\d+)/);
-  return logged ? Number(logged[1]) : null;
-}
-
-function configData(admin: PublicKey, paused: boolean): Uint8Array {
-  const [, bump] = PublicKey.findProgramAddressSync([Buffer.from("config")], PROGRAM_ID);
-  const data = Buffer.alloc(136);
-  Buffer.from(ACCOUNT_DISCRIMINATORS.config).copy(data, 0);
-  admin.toBuffer().copy(data, 8);
-  admin.toBuffer().copy(data, 40);
-  data.writeBigInt64LE(BigInt(paused ? START : 0), 72);
-  data.writeBigUInt64LE(BigInt(0), 80);
-  data.writeUInt8(paused ? 1 : 0, 88);
-  data.writeUInt8(bump, 89);
-  data.writeUInt8(1, 90);
-  return data;
-}
-
-function mintData(authority: PublicKey): Uint8Array {
-  const data = Buffer.alloc(82);
-  data.writeUInt32LE(1, 0);
-  authority.toBuffer().copy(data, 4);
-  data.writeBigUInt64LE(BigInt(10) ** BigInt(15), 36);
-  data.writeUInt8(6, 44);
-  data.writeUInt8(1, 45);
-  return data;
-}
-
-function tokenAccountData(mint: PublicKey, owner: PublicKey, amount: bigint): Uint8Array {
-  const data = Buffer.alloc(165);
-  mint.toBuffer().copy(data, 0);
-  owner.toBuffer().copy(data, 32);
-  data.writeBigUInt64LE(amount, 64);
-  data.writeUInt8(1, 108);
-  return data;
-}
 
 function harness(): Harness {
-  assert.ok(programPath, "Program binary missing: run `npm run program:fetch` first");
-  const svm = new LiteSVM();
-  svm.addProgram(addr(PROGRAM_ID), readFileSync(programPath));
-  const admin = Keypair.generate();
-  const mint = Keypair.generate().publicKey;
-  const put = (key: PublicKey, owner: PublicKey, data: Uint8Array) =>
-    svm.setAccount({
-      address: addr(key),
-      data,
-      executable: false,
-      lamports: lamports(svm.minimumBalanceForRentExemption(BigInt(data.length))),
-      programAddress: addr(owner),
-      space: BigInt(data.length),
-    });
-  const read = (key: PublicKey): Uint8Array | null => {
-    const account = svm.getAccount(addr(key));
-    return account.exists ? Uint8Array.from(account.data) : null;
-  };
-  const submit = (signers: Keypair[], instructions: TransactionInstruction[]) => {
-    const tx = new Transaction().add(...instructions);
-    tx.feePayer = signers[0].publicKey;
-    tx.recentBlockhash = svm.latestBlockhash();
-    tx.sign(...signers);
-    const result = svm.sendTransaction(decodeTransaction.decode(tx.serialize()));
-    svm.expireBlockhash();
-    return result;
-  };
-
-  const writeConfig = (paused: boolean) => put(configPda(PROGRAM_ID), PROGRAM_ID, configData(admin.publicKey, paused));
-  writeConfig(false);
-  put(mint, TOKEN_PROGRAM_ID, mintData(admin.publicKey));
-
-  const h: Harness = {
-    svm,
-    mint,
-    setTime(unix) {
-      const clock = svm.getClock();
-      clock.unixTimestamp = BigInt(unix);
-      svm.setClock(clock);
-    },
-    send(signers, instructions) {
-      const result = submit(signers, instructions);
-      if (result instanceof FailedTransactionMetadata) {
-        assert.fail(`Transaction failed: ${result.toString()}\n${result.meta().logs().join("\n")}`);
-      }
-    },
-    fail(signers, instructions, expectedCode) {
-      const result = submit(signers, instructions);
-      assert.ok(result instanceof FailedTransactionMetadata, `Expected failure ${expectedCode}`);
-      assert.equal(errorCode(result), expectedCode, result.meta().logs().join("\n"));
-    },
-    wallet() {
-      const keypair = Keypair.generate();
-      svm.airdrop(addr(keypair.publicKey), lamports(BigInt(10 * LAMPORTS_PER_SOL)));
-      put(
-        associatedTokenAddress(keypair.publicKey, mint),
-        TOKEN_PROGRAM_ID,
-        tokenAccountData(mint, keypair.publicKey, STARTING_BALANCE),
-      );
-      return keypair;
-    },
-    balance(owner) {
-      return h.vault(associatedTokenAddress(owner, mint));
-    },
-    vault(key) {
-      const data = read(key);
-      return data ? decodeTokenAccount(key.toBase58(), data).amount : BigInt(0);
-    },
-    group(key) {
-      const data = read(key);
-      assert.ok(data, "Group missing");
-      return decodeGroup(key.toBase58(), data);
-    },
-    member(group, wallet) {
-      const key = memberPda(PROGRAM_ID, group, wallet);
-      const data = read(key);
-      assert.ok(data, "Member missing");
-      return decodeMember(key.toBase58(), data);
-    },
-    setPaused(paused) {
-      writeConfig(paused);
-      const data = read(configPda(PROGRAM_ID));
-      assert.ok(data);
-      assert.equal(decodeConfig("config", data).paused, paused);
-    },
-    airdrop(key) {
-      svm.airdrop(addr(key), lamports(BigInt(LAMPORTS_PER_SOL)));
-    },
-  };
-  h.setTime(START);
-  return h;
+  assert.ok(programPath, "Program binary missing: run `cargo build-sbf` or `npm run program:fetch` first");
+  return createHarness(programPath);
 }
 
 type Circle = {

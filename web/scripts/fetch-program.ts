@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,8 @@ import { Connection, PublicKey } from "@solana/web3.js";
  *   npm run program:fetch -- [--cluster devnet] [--program-id ID] [--out PATH] [--if-missing]
  */
 
+/** SHA-256 of the original Anchor build; kept as the differential-test reference. */
+const ANCHOR_REFERENCE_SHA256 = "c6a8367a70bab933f61220deb0fc7133229d2b876ee5b6e980530b778a874ee9";
 const BPF_LOADER_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
 const PROGRAMDATA_HEADER = 45;
 const PUBLIC_RPC: Record<string, string> = {
@@ -71,7 +74,14 @@ async function main(): Promise<void> {
   const binary = elf.subarray(0, elfLength(elf));
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, binary);
-  console.log(JSON.stringify({ cluster, programId: programId.toBase58(), programData: programData.toBase58(), bytes: binary.length, out }));
+  const sha256 = createHash("sha256").update(binary).digest("hex");
+  if (sha256 === ANCHOR_REFERENCE_SHA256) {
+    // Keep the Anchor build after devnet is upgraded to the Pinocchio build.
+    writeFileSync(resolve(webRoot, ".cache/ringio-anchor-reference.so"), binary);
+  }
+  console.log(
+    JSON.stringify({ cluster, programId: programId.toBase58(), programData: programData.toBase58(), bytes: binary.length, sha256, out }),
+  );
 }
 
 main().catch((error: unknown) => {

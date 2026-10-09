@@ -11,6 +11,7 @@
 - Every transaction is simulated before the wallet opens, and program errors are decoded into plain language. The network and asset mint are shown next to every signing button, mainnet requires a one-time risk acknowledgement, and mainnet transactions get a sized compute budget and priority fee.
 - A per-wallet action planner mirrors the program's state machine and deadlines, so each member sees exactly one next step ("Your contribution is due", "Reveal your secret", "Pay out this turn" …) and anyone can run the permissionless cranks.
 - Payout order is drawn fairly: members commit a secret when joining (derived from a wallet signature, so it can be re-derived on any device), and once everyone reveals, the program derives the order.
+- The program is a ~92 KB [Pinocchio](https://github.com/anza-xyz/pinocchio) build with the same interface as the original 657 KB Anchor build, so deploying locks ~0.64 SOL of rent instead of ~4.6 SOL. No feature was dropped: a differential test runs over a hundred normal and adversarial transactions against both builds and requires identical results, error codes, events, and account bytes.
 - The interface uses a dark "gold ring" design with a live circle dial, lifecycle stepper, member ledger, vault balances, mobile navigation, and an optional AI/rules guide that only ranks circles really forming on the selected network.
 
 ## Lifecycle
@@ -41,14 +42,14 @@ Collateral is `contribution × turns still owed after your payout`: the first re
 | Network | Program | Asset | Status |
 | --- | --- | --- | --- |
 | Devnet | `JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy` | Circle devnet USDC `4zMM…ncDU` | Deployed and initialized |
-| Mainnet-beta | same ID when deployed with the same keypair | Circle USDC `EPjF…Dt1v` | Ready to deploy — needs ~4.6 SOL rent + config init |
+| Mainnet-beta | same ID when deployed with the same keypair | Circle USDC `EPjF…Dt1v` | Ready to deploy; needs ~0.64 SOL locked rent (~1.3 SOL in the wallet during deploy) + config init |
 | Testnet | same ID when deployed with the same keypair | Your SPL test token | Ready to deploy; needs a test mint |
 
 Check live readiness at any time: `npm --prefix web run network:status`. The full mainnet/testnet procedure (verifiable build, deploy, config init, multisig hand-off, web env) is in [`docs/mainnet-deployment.md`](docs/mainnet-deployment.md).
 
 ## Local development
 
-Prerequisites: Node.js `20.19.4` (`.nvmrc`), Rust `1.89.0` (`rust-toolchain.toml`). Solana and Anchor CLIs are only needed to build or deploy the program.
+Prerequisites: Node.js `20.19.4` (`.nvmrc`), Rust `1.89.0` (`rust-toolchain.toml`). The Agave (Solana) CLI is only needed to build (`cargo build-sbf`) or deploy the program.
 
 ```bash
 nvm use
@@ -63,24 +64,27 @@ Use a Wallet Standard wallet (Phantom, Solflare, Backpack). On devnet, get SOL f
 
 ```bash
 npm run check                         # lint, types, unit tests, build, Rust fmt/tests/clippy
-npm --prefix web run test:svm         # UI instruction builders vs the deployed bytecode (LiteSVM)
 cargo test -p ringio                  # program unit tests
+cargo build-sbf --manifest-path programs/ringio/Cargo.toml   # ~92 KB target/deploy/ringio.so
+npm --prefix web run test:svm         # UI builders + Anchor-equivalence suite in LiteSVM
+npm --prefix web run program:cost     # SOL needed to deploy the local build
 ```
 
 - `web/src/lib/ringio/*.test.ts`: discriminators, Borsh layouts, PDAs, commitment hashing, amounts, action planner, error decoding.
-- `web/svm/lifecycle.svm.test.ts` — downloads the devnet program (read-only) and runs a full three-member lifecycle with a covered default, a cancellation, a pre-payout default with refunds while paused, and pause enforcement.
+- `web/svm/lifecycle.svm.test.ts`: a full three-member lifecycle with a covered default, a cancellation, a pre-payout default with refunds while paused, and pause enforcement against the local build (or the downloaded devnet program).
+- `web/svm/differential.svm.test.ts`: every step, including forged/substituted accounts, wrong signers, replays and malformed data, against both the original Anchor bytecode and the new build, requiring identical outcomes, error codes, events, and account bytes.
 - `web/scripts/devnet-e2e.ts`: funded lifecycle on real devnet with repo-external keypairs (see `docs/devnet-runbook.md`).
 
 ## Repository map
 
 ```text
-programs/ringio/        Anchor program: state machine, custody, invariants, unit tests
+programs/ringio/        Pinocchio program (Anchor-compatible interface): state machine, custody, invariants, unit tests
 web/src/lib/ringio/     Client: account decoders, PDAs, instruction builders, commit–reveal, action planner
 web/src/lib/solana/     Network configuration (mainnet-beta / devnet / testnet)
 web/src/components/     UI (home, my circles, circle detail, create)
 web/src/hooks/          RPC queries, transaction sender, secret derivation
-web/svm/                LiteSVM tests against the deployed bytecode
-web/scripts/            Config init, network status, program fetch, devnet E2E
+web/svm/                LiteSVM lifecycle and Anchor-equivalence tests
+web/scripts/            Config init, network status, program fetch/cost, devnet E2E
 docs/                   Architecture, deployment, devnet runbook, AI matching
 ```
 
