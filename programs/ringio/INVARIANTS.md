@@ -1,17 +1,31 @@
 # Ringio on-chain invariants
 
-Scope: `programs/ringio` MVP, Anchor 0.32.1, standard SPL Token accounts only.
+Scope: `programs/ringio` MVP, Pinocchio 0.9 implementation of the original
+Anchor 0.32.1 interface, standard SPL Token accounts only.
 Amounts are raw mint units. `N = Group.member_count`, `c =
 Group.contribution_amount`, `r = Member.payout_rank`, and `q =
 Group.current_round`.
 
 This file is an audit checklist, not an audit report. The host tests exercise the
-pure arithmetic and ordering properties described below. The generated IDL and
-SBF artifact build successfully, and one external-script, two-member devnet
-lifecycle exercised funded contributions, payouts, post-grace collateral cover,
-and terminal vault reconciliation. That bounded run does not establish exhaustive
-transaction-level CPI safety, compute limits, account-rent behavior, or audit
-readiness.
+pure arithmetic, layout, and ordering properties described below. The LiteSVM
+suites run full lifecycles with real SPL Token CPIs, and the differential suite
+(`web/svm/differential.svm.test.ts`) runs every step, including forged and
+substituted accounts, wrong signers, replays, prefunded PDAs, Token-2022 mints,
+and malformed instruction data, against both the original Anchor bytecode and
+this build, requiring identical outcomes, error codes, events, and account
+bytes. One external-script, two-member devnet lifecycle (on the Anchor build)
+exercised funded contributions, payouts, post-grace collateral cover, and
+terminal vault reconciliation. None of this establishes audit readiness.
+
+The Pinocchio rewrite keeps Anchor's account-validation order: every account is
+first deserialized (owner, discriminator, layout, signer, program id), then
+`init` accounts are created, then the remaining constraints are checked (PDA
+seeds before `mut`), then the handler's business rules run. When several checks
+fail at once, the first reported error therefore matches the Anchor program in
+the cases the differential suite covers; it is not guaranteed for every
+combination of simultaneous account faults. Instruction data shorter than the
+arguments fails with `InstructionDidNotDeserialize`; trailing bytes are ignored,
+as in Anchor. Anchor's on-chain IDL instructions are not included.
 
 ## State and identity
 
@@ -103,10 +117,9 @@ account bytes so the serialized account allocations remain unchanged.
 - Payouts and refunds may target any classic SPL Token account owned by the
   required recipient/member with the group mint. An associated token account is
   a client convention, not an on-chain requirement.
-- Runtime support is classic SPL Token only (`Program<Token>` and
-  `Account<Mint/TokenAccount>`). The Cargo feature `token_2022` is enabled only
-  because Anchor 0.32.1's token-account `init` derive references its helper
-  modules; Token-2022 accounts/program IDs cannot satisfy these contexts.
+- Runtime support is classic SPL Token only: the token program account must be
+  the classic Token program ID, and mints, vaults, and member token accounts
+  must be owned by it. Token-2022 accounts and program IDs are rejected.
 - The program accepts any classic SPL mint. The official client must restrict
   branded USDC groups to the configured cluster's canonical USDC mint. A mint's
   freeze authority remains an external issuer risk.
@@ -119,14 +132,14 @@ account bytes so the serialized account allocations remain unchanged.
 - No oracle is used because collateral and contributions use the same mint.
 - Invite/Member rent is not reclaimed in the MVP; token principal refunds are
   independent of account rent.
-- Anchor 0.32.1 generated the local IDL and TypeScript client surface under the
-  ignored `target/` tree. Browser value-moving builders are still unwired, so UI
-  financial actions remain labelled non-signing previews.
-- QEDGen, Trident, Surfpool, LiteSVM transaction tests, and
-  `solana-fender-mcp` were unavailable/not run in the verified release. No
-  independent audit was performed.
-- `cargo test` remains a host build. SBF compilation, devnet deployment, and one
-  funded lifecycle against Circle devnet USDC were verified separately; crafted
-  account substitution, rollback, maximum-roster compute profiling, repeated
-  defaults, and broad validator integration remain unverified. Do not infer
-  mainnet readiness from one devnet scenario.
+- The web client's hand-encoded builders (`web/src/lib/ringio/instructions.ts`)
+  are the interface reference; there is no generated IDL.
+- Panics abort the transaction (no partial state). Group roster and payout-order
+  slots are read and written through checked helpers that fail closed with
+  `InvariantViolation` instead of panicking.
+- QEDGen, Trident, Surfpool, and `solana-fender-mcp` were unavailable/not run
+  in the verified release. No independent audit was performed.
+- `cargo test` remains a host build. Crafted account substitution, replays, and
+  a maximum-size (32-member) circle are covered in LiteSVM; fuzzing, broad
+  validator integration, and a funded devnet lifecycle on this build remain
+  open. Do not infer mainnet readiness from simulated runs.

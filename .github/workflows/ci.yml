@@ -38,12 +38,11 @@ jobs:
           NEXT_PUBLIC_DEFAULT_CLUSTER: devnet
 
   svm:
-    name: Client builders vs deployed bytecode (LiteSVM)
+    name: SBF build, size budget, and Anchor equivalence (LiteSVM)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: web
+    timeout-minutes: 30
+    env:
+      AGAVE_VERSION: v2.3.13
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -51,10 +50,34 @@ jobs:
           node-version: 20.19.4
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.local/share/solana
+            ~/.cache/solana
+          key: agave-${{ env.AGAVE_VERSION }}
+      # Keeps the original Anchor bytecode (the differential reference) after
+      # devnet is upgraded to the Pinocchio build.
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: web/.cache/ringio-anchor-reference.so
+          key: ringio-anchor-reference-c6a8367a
+      - name: Install Agave CLI
+        run: |
+          if [ ! -x "$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf" ]; then
+            sh -c "$(curl -sSfL https://release.anza.xyz/${AGAVE_VERSION}/install)"
+          fi
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - run: cargo build-sbf --manifest-path programs/ringio/Cargo.toml
       - run: npm ci
-      # Downloads the devnet program bytecode (read-only) and runs the full
-      # create → payout → default → refund lifecycle with the UI's instruction builders.
+        working-directory: web
+      - name: Program size budget (deployment rent scales with it)
+        run: npm run program:cost -- --max-bytes 100000
+        working-directory: web
+      # Runs the UI's instruction builders through full lifecycles on the local
+      # build, and the differential suite against the original Anchor bytecode.
       - run: npm run test:svm
+        working-directory: web
 
   program:
     name: Program format and host tests
@@ -70,4 +93,3 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo test -p ringio
       - run: cargo clippy -p ringio --all-targets -- -D warnings
-      - run: cargo check -p ringio --features idl-build

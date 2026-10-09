@@ -10,7 +10,7 @@ import {
 } from "./constants";
 
 /**
- * Binary decoders for Ringio's Anchor accounts. Offsets mirror
+ * Binary decoders for Ringio's program accounts (Anchor-compatible layout). Offsets mirror
  * `programs/ringio/src/state.rs` (8-byte discriminator + Borsh fields).
  * DataView keeps the decoders identical in Node and in the browser.
  */

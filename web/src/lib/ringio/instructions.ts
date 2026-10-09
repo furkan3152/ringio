@@ -28,9 +28,10 @@ import {
 } from "./pda";
 
 /**
- * Hand-encoded Anchor instructions. Account order and argument layout mirror
- * the `#[derive(Accounts)]` structs in `programs/ringio/src/lib.rs`; the
- * LiteSVM suite executes every builder against the deployed program binary.
+ * Hand-encoded program instructions (Anchor-compatible discriminators and
+ * Borsh arguments). Account order and argument layout mirror the handlers in
+ * `programs/ringio/src/processor.rs`; the LiteSVM suites execute every
+ * builder against the program binary.
  */
 
 type Meta = [pubkey: PublicKey, isSigner: boolean, isWritable: boolean];

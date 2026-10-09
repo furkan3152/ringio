@@ -1,75 +1,109 @@
-use anchor_lang::prelude::*;
+use pinocchio::program_error::ProgramError;
 
-#[error_code]
+/// Program errors. Codes are identical to the former Anchor program
+/// (`6000 + variant index`) so clients decode them unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
 pub enum RingioError {
-    #[msg("The protocol is paused")]
-    ProtocolPaused,
-    #[msg("The signer is not authorized for this action")]
+    ProtocolPaused = 6000,
     Unauthorized,
-    #[msg("The group is not in the required state")]
     InvalidGroupState,
-    #[msg("The requested member count is outside the supported range")]
     InvalidMemberCount,
-    #[msg("The contribution amount must be greater than zero")]
     InvalidContributionAmount,
-    #[msg("A duration must be greater than zero")]
     InvalidDuration,
-    #[msg("The supplied deadline is invalid or has elapsed")]
     InvalidDeadline,
-    #[msg("The group is already full")]
     GroupFull,
-    #[msg("The invite is invalid or has already been used")]
     InvalidInvite,
-    #[msg("This wallet is already a member")]
     DuplicateMember,
-    #[msg("The commitment must not be the all-zero hash")]
     InvalidCommitment,
-    #[msg("The reveal does not match the member commitment")]
     CommitmentMismatch,
-    #[msg("This member already revealed")]
     AlreadyRevealed,
-    #[msg("Not all members have revealed")]
     RevealIncomplete,
-    #[msg("The payout order has not been finalized")]
     OrderNotFinalized,
-    #[msg("The member is not present in the finalized payout order")]
     MemberNotRanked,
-    #[msg("Collateral has already been posted by this member")]
     CollateralAlreadyPosted,
-    #[msg("Not all members have posted their required collateral")]
     CollateralIncomplete,
-    #[msg("The collateral vault is below the tracked required amount")]
     CollateralVaultShortfall,
-    #[msg("This member has already resolved the current contribution")]
     ContributionAlreadyResolved,
-    #[msg("The current round contribution window has closed")]
     ContributionWindowClosed,
-    #[msg("The round grace period has not elapsed")]
     GracePeriodActive,
-    #[msg("This missed contribution is not eligible for collateral coverage")]
     DefaultNotCoverable,
-    #[msg("The selected member is not an uncovered defaulter")]
     DefaultIsCoverable,
-    #[msg("Not every contribution in the round has been resolved")]
     RoundIncomplete,
-    #[msg("The supplied payout recipient is not next in the on-chain order")]
     WrongRecipient,
-    #[msg("The payout for this member has already been recorded")]
     PayoutAlreadyReceived,
-    #[msg("There is no failed-round resolution to refund")]
     NothingToRefund,
-    #[msg("Failed-round contribution refunds must finish before collateral refunds")]
     PendingRoundRefunds,
-    #[msg("The group cannot be cancelled yet")]
     CancellationNotAllowed,
-    #[msg("The token mint does not match the group mint")]
     WrongMint,
-    #[msg("The token account authority is invalid")]
     WrongTokenAuthority,
-    #[msg("The supplied vault is not the group's canonical vault")]
     WrongVault,
-    #[msg("Arithmetic overflow or underflow")]
     MathOverflow,
-    #[msg("An internal state invariant was violated")]
     InvariantViolation,
+}
+
+impl From<RingioError> for ProgramError {
+    fn from(error: RingioError) -> Self {
+        ProgramError::Custom(error as u32)
+    }
+}
+
+/// Account-validation failures, numbered like Anchor's framework errors so
+/// existing client error copy keeps working.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum AccountError {
+    InstructionFallbackNotFound = 101,
+    InstructionDidNotDeserialize = 102,
+    ConstraintMut = 2000,
+    ConstraintSeeds = 2006,
+    ConstraintAddress = 2012,
+    AccountDiscriminatorMismatch = 3002,
+    AccountDidNotDeserialize = 3003,
+    AccountNotEnoughKeys = 3005,
+    AccountOwnedByWrongProgram = 3007,
+    InvalidProgramId = 3008,
+    AccountNotSigner = 3010,
+    AccountNotInitialized = 3012,
+    AccountNotProgramData = 3013,
+    AccountSysvarMismatch = 3015,
+}
+
+impl From<AccountError> for ProgramError {
+    fn from(error: AccountError) -> Self {
+        ProgramError::Custom(error as u32)
+    }
+}
+
+/// Shorthand for `Err(error.into())`.
+#[inline(always)]
+pub fn fail<T>(error: impl Into<ProgramError>) -> Result<T, ProgramError> {
+    Err(error.into())
+}
+
+/// Turns a checked-arithmetic `None` into `MathOverflow`.
+pub trait OrOverflow<T> {
+    fn or_overflow(self) -> Result<T, ProgramError>;
+}
+
+impl<T> OrOverflow<T> for Option<T> {
+    #[inline(always)]
+    fn or_overflow(self) -> Result<T, ProgramError> {
+        self.ok_or(ProgramError::Custom(RingioError::MathOverflow as u32))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codes_match_the_published_anchor_numbering() {
+        assert_eq!(RingioError::ProtocolPaused as u32, 6000);
+        assert_eq!(RingioError::GroupFull as u32, 6007);
+        assert_eq!(RingioError::ContributionAlreadyResolved as u32, 6019);
+        assert_eq!(RingioError::GracePeriodActive as u32, 6021);
+        assert_eq!(RingioError::CancellationNotAllowed as u32, 6029);
+        assert_eq!(RingioError::InvariantViolation as u32, 6034);
+    }
 }

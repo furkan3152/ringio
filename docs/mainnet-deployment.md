@@ -15,22 +15,42 @@ npm --prefix web run network:status -- --cluster mainnet-beta
 
 ## 1. What it costs
 
-The program binary is about 657 KB. Program-data rent is roughly **4.6 SOL**, locked for as long as the program exists (recoverable only by closing the program). During `solana program deploy` an upload buffer temporarily needs about the same again, so keep **~10 SOL** in the deployer wallet; the buffer rent is returned when the deploy finishes. Testnet SOL is free from the faucet.
+The program is written with [Pinocchio](https://github.com/anza-xyz/pinocchio) (no Anchor runtime, no heap), so the deployed binary is about **92 KB** instead of the former 657 KB Anchor build. Print exact numbers for your build:
 
-Per circle, users pay rent for their own accounts (~0.024 SOL for a new circle, ~0.0016 SOL per invitation, ~0.0022 SOL per joined member) plus normal fees.
+```bash
+npm --prefix web run program:cost
+```
+
+| | Pinocchio build (now) | Former Anchor build |
+| --- | --- | --- |
+| Binary | ~92 KB | 657 KB |
+| Locked while deployed (program + ProgramData rent) | **~0.64 SOL** | ~4.58 SOL |
+| Temporary upload buffer (refunded after deploy) | ~0.64 SOL | ~4.58 SOL |
+| Deployer wallet needs at deploy time | **~1.3 SOL** + priority fees | ~9.2 SOL |
+
+Rent is a deposit, not a fee: the ProgramData rent stays locked while the program exists (recoverable only by closing the program, which retires its ID for good), and the buffer rent is returned when `solana program deploy` finishes. Keep ~1.5 SOL in the deployer wallet on mainnet to cover priority fees. Testnet SOL is free from the faucet.
+
+Per circle, users pay rent for their own accounts (~0.024 SOL for a new circle, ~0.0016 SOL per invitation, ~0.0022 SOL per joined member) plus normal fees. These amounts are unchanged by the rewrite.
 
 ## 2. Toolchain and build
 
-Use the pinned toolchain from `docs/devnet-runbook.md` (Rust 1.89.0, Anchor CLI 0.32.1, matching Solana CLI). Build reproducibly and confirm you are deploying the reviewed commit:
+Install the Agave CLI (`2.3.x`, which brings `cargo build-sbf` and platform-tools), then build and test the reviewed commit:
 
 ```bash
+sh -c "$(curl -sSfL https://release.anza.xyz/v2.3.13/install)"
 git rev-parse HEAD
 cargo test -p ringio
-anchor build --verifiable
-sha256sum target/verifiable/ringio.so
+cargo build-sbf --manifest-path programs/ringio/Cargo.toml   # -> target/deploy/ringio.so
+npm --prefix web run test:svm                                # lifecycle + Anchor-equivalence suites
+npm --prefix web run program:cost -- --max-bytes 100000
+sha256sum target/deploy/ringio.so
 ```
 
-**Program ID.** Deploying with the same program keypair (`target/deploy/ringio-keypair.json`, kept outside git) gives the same ID on every cluster: `JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy`. If you use a new keypair, run `anchor keys sync`, rebuild, and set `NEXT_PUBLIC_PROGRAM_ID_MAINNET` / `NEXT_PUBLIC_PROGRAM_ID_TESTNET` to the new ID. Never commit keypairs.
+For a publicly verifiable build hash use [`solana-verify build`](https://github.com/Ellipsis-Labs/solana-verifiable-build), which runs the same `cargo build-sbf` inside a pinned container.
+
+The external interface is identical to the former Anchor program (instruction and account discriminators, Borsh arguments, account order, account layouts, events, and error codes), so the web app, existing accounts, and indexers work unchanged. `web/svm/differential.svm.test.ts` proves this by running every step against both binaries. The program no longer embeds Anchor's on-chain IDL instructions; the client builders in `web/src/lib/ringio/` are the interface reference.
+
+**Program ID.** Deploying with the same program keypair (kept outside git) gives the same ID on every cluster: `JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy`. If you use a new keypair, update `declare_id!` in `programs/ringio/src/lib.rs`, rebuild, and set `NEXT_PUBLIC_PROGRAM_ID_MAINNET` / `NEXT_PUBLIC_PROGRAM_ID_TESTNET` to the new ID. Never commit keypairs.
 
 ## 3. Deploy
 
@@ -38,14 +58,14 @@ Use a dedicated deployer keypair stored outside the repository. Confirm the targ
 
 ```bash
 # testnet
-solana airdrop 5 --url testnet --keypair ~/keys/ringio-deployer.json   # repeat or use faucet.solana.com
-solana program deploy target/verifiable/ringio.so \
+solana airdrop 2 --url testnet --keypair ~/keys/ringio-deployer.json   # repeat or use faucet.solana.com
+solana program deploy target/deploy/ringio.so \
   --program-id ~/keys/ringio-program.json \
   --keypair ~/keys/ringio-deployer.json \
   --url testnet
 
 # mainnet-beta (add a priority fee so buffer writes land)
-solana program deploy target/verifiable/ringio.so \
+solana program deploy target/deploy/ringio.so \
   --program-id ~/keys/ringio-program.json \
   --keypair ~/keys/ringio-deployer.json \
   --url https://YOUR-MAINNET-RPC \
@@ -53,7 +73,23 @@ solana program deploy target/verifiable/ringio.so \
   --max-sign-attempts 50
 ```
 
-If a deploy is interrupted, resume or close the leftover buffer with `solana program show --buffers` / `solana program close <BUFFER>` so its SOL is recovered.
+If a deploy is interrupted, resume or close the leftover buffer with `solana program show --buffers` / `solana program close <BUFFER>` so its SOL is recovered. Do not pass a larger `--max-len`: it only locks more rent. A later, larger upgrade can grow the account with `solana program extend`.
+
+### Upgrading an existing deployment (devnet)
+
+The devnet program was deployed from the Anchor build. Upgrading it in place keeps the program ID, the config, and every existing circle (account layouts are unchanged); it needs the current upgrade authority:
+
+```bash
+npm --prefix web run program:fetch          # keeps a copy of the Anchor build for the differential suite
+solana program deploy target/deploy/ringio.so \
+  --program-id JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy \
+  --upgrade-authority ~/keys/ringio-deployer.json \
+  --keypair ~/keys/ringio-deployer.json \
+  --url devnet
+npm --prefix web run network:status -- --cluster devnet   # matchesLocalArtifact: true
+```
+
+An upgrade never shrinks an existing ProgramData account, so the devnet program keeps its original (devnet-SOL) rent locked. Fresh deployments on mainnet-beta and testnet only lock the smaller amount above.
 
 ## 4. Initialize the config
 
@@ -133,4 +169,4 @@ The public `api.mainnet-beta.solana.com` endpoint is heavily rate-limited and re
 ## How the client is verified
 
 - `npm --prefix web test` — unit tests for discriminators, Borsh layouts, PDAs, commitment hashing, amount parsing, the action planner, and error decoding.
-- `npm --prefix web run test:svm` — downloads the deployed devnet bytecode (read-only) and runs the full lifecycle (create → invite → join → reveal → finalize → protection → activate → contribute → settle → covered default → completion), a cancellation, a pre-payout default with refunds while paused, and pause enforcement — all with the exact instruction builders the UI uses.
+- `npm --prefix web run test:svm` — runs the full lifecycle (create → invite → join → reveal → finalize → protection → activate → contribute → settle → covered default → completion), a cancellation, a pre-payout default with refunds while paused, and pause enforcement — all with the exact instruction builders the UI uses — against the local build (`target/deploy/ringio.so`, or the downloaded devnet bytecode when there is no local build). With a local build it also runs the differential suite, which executes over a hundred normal and adversarial transactions (forged and substituted accounts, wrong signers, replays, foreign mints, prefunded PDAs, malformed instruction data) against both the original Anchor bytecode and the new build and requires identical results, error codes, events, and account bytes.
