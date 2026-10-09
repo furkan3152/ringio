@@ -2,25 +2,25 @@
 
 This runbook separates five claims:
 
-1. **Frontend layer:** the UI renders decoded Group/Member/Invite/vault state for the selected cluster, fails empty/error rather than substituting mock rows, and builds, simulates, and wallet-signs every Ringio instruction (`npm --prefix web run test:svm` runs those builders against the deployed bytecode). Mainnet-beta and testnet deployment is covered in `docs/mainnet-deployment.md`.
+1. **Frontend layer:** the UI renders decoded Group/Member/Invite/vault state for the selected cluster, fails empty/error rather than substituting mock rows, and builds, simulates, and wallet-signs every Ringio instruction (`npm --prefix web run test:svm` runs those builders against the local build or the deployed bytecode). Mainnet-beta and testnet deployment is covered in `docs/mainnet-deployment.md`.
 2. **Rust unit verification:** pure state/math tests pass; this does not execute token CPIs.
-3. **Local integration verification:** Anchor tests pass against a local validator and exercise real account constraints/CPIs.
+3. **Local integration verification:** the LiteSVM suites (`web/svm/`) execute the SBF build with real SPL Token CPIs, and the differential suite requires identical behaviour to the original Anchor bytecode.
 4. **Devnet integration:** the UI reads a deployed program and submitted transactions are explorer-verifiable.
 5. **AI discovery:** deterministic catalog matching can pass locally without proving that an OpenRouter request succeeded; live model mode requires a server-side key and a response labelled `openrouter`.
 
 Passing one layer does not prove the next one.
 
-Current repository boundary: Rust 1.89 formatting, 16/16 unit tests, clippy with warnings denied, generated IDL, and SBF build pass. Program ID `JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy` is synchronized and deployed on devnet; downloaded bytecode exactly matches the local artifact hash. The canonical config is initialized. On 2026-08-12, a two-member Group completed a funded two-round Circle-devnet-USDC lifecycle with an independent keeper, one collateral-covered default, zero terminal vault balances, and participant-balance conservation. Node 20.19.4 frontend lint/typecheck/build, 17/17 duration/matcher/privacy/binary-decoder tests, dependency audit with zero reported vulnerabilities, and real Group/API/AI HTTP smoke checks pass. Exhaustive LiteSVM/malicious-account coverage and a live OpenRouter response remain open.
+Current repository boundary: the program was rewritten from Anchor to Pinocchio with the same interface to cut deployment rent (657 KB → ~92 KB binary, ~4.6 → ~0.64 SOL locked). Rust 1.89 formatting, unit tests, clippy with warnings denied, the SBF build, the LiteSVM lifecycle suite, and the Anchor-equivalence differential suite pass. The history below describes the Anchor build that is still deployed on devnet until it is upgraded (see `docs/mainnet-deployment.md`, "Upgrading an existing deployment"). Program ID `JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy` is deployed on devnet; at the time, the downloaded bytecode exactly matched the Anchor artifact hash. The canonical config is initialized. On 2026-08-12, a two-member Group completed a funded two-round Circle-devnet-USDC lifecycle with an independent keeper, one collateral-covered default, zero terminal vault balances, and participant-balance conservation. Node 20.19.4 frontend lint/typecheck/build, 17/17 duration/matcher/privacy/binary-decoder tests, dependency audit with zero reported vulnerabilities, and real Group/API/AI HTTP smoke checks pass. LiteSVM coverage of malicious/substituted accounts now exists (differential suite); a funded devnet run on the Pinocchio build and a live OpenRouter response remain open.
 
 ## 1. Prerequisites
 
-Use the repository-pinned Node.js `20.19.4` and Rust `1.89.0`, plus Anchor CLI `0.32.1`, a compatible Solana CLI, and SPL Token CLI. Do not silently upgrade the framework/toolchain in a release run.
+Use the repository-pinned Node.js `20.19.4` and Rust `1.89.0`, plus Agave (Solana) CLI `2.3.x` (provides `cargo build-sbf`) and SPL Token CLI. Anchor CLI is no longer needed. Do not silently upgrade the toolchain in a release run.
 
 ```bash
 rustc --version
 cargo --version
 solana --version
-anchor --version
+cargo build-sbf --version
 node --version
 npm --version
 spl-token --version
@@ -49,7 +49,7 @@ From the Ringio workspace root:
 
 ```bash
 git status --short
-find . -maxdepth 3 -type f \( -name Anchor.toml -o -name Cargo.toml -o -name package.json -o -name .env.example \) -print
+find . -maxdepth 3 -type f \( -name Cargo.toml -o -name package.json -o -name .env.example \) -print
 ```
 
 Record the commit used for evidence:
@@ -62,13 +62,13 @@ If the workspace root is not a Git repository in a copied/demo environment, reco
 
 ## 3. Verify locally first
 
-Program checks, when the Anchor workspace is present:
+Program checks:
 
 ```bash
 cargo test -p ringio
-anchor build
-anchor keys list
-anchor test
+cargo build-sbf --manifest-path programs/ringio/Cargo.toml
+npm --prefix web run test:svm        # lifecycle + Anchor-equivalence (LiteSVM)
+npm --prefix web run program:cost    # binary size and deployment rent
 ```
 
 Frontend checks:
@@ -101,32 +101,26 @@ Record exact output in the release notes. Expected minimum test scenarios:
 - verify a pause begun after an expired boundary leaves it expired, while multiple valid pauses extend a live boundary by exactly the sum of actual paused durations;
 - exercise pre-activation cancel, active default/failed-round refund, and collateral-refund boundaries.
 
-Do not deploy until `anchor build` generates an IDL from this source and that IDL is reconciled with the architecture, client, and tests at the same commit.
+Do not deploy until the SBF build from this commit passes the LiteSVM suites with the same client builders the UI ships.
 
 ## 4. Program identity and deployment
 
-Generate or select the intended program keypair once. Then synchronize declarations before a public deployment:
+Generate or select the intended program keypair once (`solana-keygen pubkey <program-keypair.json>` prints its ID). Ringio's program identity is `JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy`.
 
-```bash
-anchor keys list
-anchor keys sync
-anchor build
-```
+Review the program ID in all of these places:
 
-`anchor keys sync` changes source/configured IDs. Review the exact diff. Ringio's current generated program identity is `JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy`.
-
-Review the resulting program ID in all of these places:
-
-- `declare_id!` in the program;
-- `[programs.devnet]` in `Anchor.toml`;
-- generated IDL/client address;
-- frontend environment;
+- `declare_id!` in `programs/ringio/src/lib.rs`;
+- the client default in `web/src/lib/solana/` and the frontend environment;
 - demo and grant evidence.
 
-Deploy explicitly to devnet:
+Deploy (or upgrade) explicitly on devnet:
 
 ```bash
-anchor deploy --provider.cluster devnet
+cargo build-sbf --manifest-path programs/ringio/Cargo.toml
+solana program deploy target/deploy/ringio.so \
+  --program-id <program-keypair.json or JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy> \
+  --keypair <devnet-deployer.json> \
+  --url devnet
 ```
 
 Verify the executable account and note the upgrade authority:
@@ -135,9 +129,9 @@ Verify the executable account and note the upgrade authority:
 solana program show "[PROGRAM_ID]" --url devnet
 ```
 
-Save the deploy signature and explorer URL. A successful `anchor deploy` does not initialize `GlobalConfig` and does not prove business instructions work.
+Save the deploy signature and explorer URL. A successful `solana program deploy` does not initialize `GlobalConfig` and does not prove business instructions work.
 
-Verified 2026-08-11 devnet release:
+Verified 2026-08-11 devnet release (Anchor build, before the Pinocchio rewrite):
 
 | Item | Value |
 | --- | --- |
@@ -202,7 +196,7 @@ Evidence to record:
 | Config PDA | `G4TPLwPbZf8Exwm4zNtHeEngB56SuFXRtbhRTjD5LKis` |
 | Config authority | same verified upgrade authority |
 | Initialization signature | `7PAh5AiNSw1y5CVc2Z3R6QhRoFKqKXsPyNQS6ourx3ccUsi1h7XRYbaBa4vAmSjfZnjBrN87VHY9zpjDo8HXCgS` |
-| IDL/build commit | `[COMMIT]` |
+| Build commit / artifact SHA-256 | `[COMMIT]` / `[SHA256]` |
 
 The initializer is deliberately separate from deploy so authority and ProgramData checks can be independently verified. It exits without a second transaction when the config PDA already exists.
 
@@ -321,7 +315,7 @@ Before sharing the demo, complete:
 
 | Check | Evidence |
 | --- | --- |
-| Local Anchor tests | command, pass count, commit |
+| Local LiteSVM suites | command, pass count, commit |
 | Frontend lint/build | command, output, commit |
 | Deterministic AI matcher | command, pass count, direct-code/PII/fallback cases |
 | Live OpenRouter mode | server log/request ID without prompt or key, response mode, model; otherwise `not tested` |
@@ -337,7 +331,7 @@ If a safety issue appears, use `set_paused` only if the deployed implementation 
 
 - Devnet tokens have no monetary value and devnet can reset or degrade.
 - Read-only deployed-account integration is not proof that the unwired wallet transaction previews can move funds.
-- The generated IDL and SBF artifact live under ignored `target/`; reproduce them from pinned source and compare dumped deployed bytes before an upgrade.
+- The SBF artifact lives under ignored `target/`; reproduce it from pinned source and compare dumped deployed bytes (`network:status` → `matchesLocalArtifact`) before and after an upgrade.
 - A deterministic AI result is not proof that OpenRouter or GPT-4o was called.
 - Group codes and availability are derived from direct confirmed-RPC reads; without an indexer, discovery latency and public-RPC availability remain operational risks.
 - The MVP's collateral guarantee covers post-payout obligations, not pre-payout liveness.

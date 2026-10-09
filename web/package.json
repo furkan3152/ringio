@@ -13,6 +13,7 @@
     "smoke:create-group": "tsx scripts/create-smoke-group.ts",
     "e2e:devnet": "tsx scripts/devnet-e2e.ts",
     "program:fetch": "tsx scripts/fetch-program.ts",
+    "program:cost": "tsx scripts/program-cost.ts",
     "test:svm": "tsx scripts/fetch-program.ts --if-missing && tsx --test svm/*.test.ts",
     "network:status": "tsx scripts/network-status.ts"
   },
@@ -28,7 +29,6 @@
     "react-dom": "19.1.0"
   },
   "devDependencies": {
-    "@coral-xyz/anchor": "0.32.1",
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",

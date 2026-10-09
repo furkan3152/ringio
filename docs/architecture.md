@@ -1,6 +1,6 @@
 # Ringio MVP Architecture
 
-Status: design contract synchronized to the Anchor source and locally generated IDL for the devnet MVP. Program ID `JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy` is deployed on Solana devnet and synchronized across source, Anchor config, generated IDL, and the frontend. Its config PDA is initialized and a funded two-member Group completed two rounds, including one post-payout default covered from collateral. The web client now builds, simulates, and wallet-signs every user-facing instruction (create, invite, join, reveal, finalize, collateral, activate, contribute, settle, cover, abort, cancel, and both refunds) on any configured cluster — mainnet-beta, devnet, or testnet — and those builders are executed against the deployed devnet bytecode in LiteSVM. Mainnet and testnet still require a program deployment and config initialization (see `docs/mainnet-deployment.md`). Features explicitly marked **Roadmap** are not part of the implemented MVP.
+Status: design contract synchronized to the program source for the devnet MVP. The program was first written with Anchor and has been rewritten with Pinocchio to cut deployment rent (657 KB → ~92 KB binary, ~4.6 → ~0.64 SOL locked) while keeping the exact interface: discriminators, Borsh arguments, account order and layouts, events, account-validation order, and error codes. A differential LiteSVM suite runs every step of its scenarios against both builds. Program ID `JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy` is deployed on Solana devnet (currently the Anchor build) and synchronized across source and the frontend. Its config PDA is initialized and a funded two-member Group completed two rounds, including one post-payout default covered from collateral. The web client now builds, simulates, and wallet-signs every user-facing instruction (create, invite, join, reveal, finalize, collateral, activate, contribute, settle, cover, abort, cancel, and both refunds) on any configured cluster — mainnet-beta, devnet, or testnet — and those builders are executed against the program bytecode in LiteSVM. Mainnet and testnet still require a program deployment and config initialization (see `docs/mainnet-deployment.md`). Features explicitly marked **Roadmap** are not part of the implemented MVP.
 
 ## 1. Product and security boundary
 
@@ -33,7 +33,7 @@ The program is non-custodial in the operational sense: tokens sit in program-der
 
 ```mermaid
 flowchart LR
-    W[Member wallets] -->|join, reveal, collateral, contribute| P[Ringio Anchor program]
+    W[Member wallets] -->|join, reveal, collateral, contribute| P[Ringio program]
     K[Untrusted keeper] -->|finalize / cover / settle| P
     P --> C[(Group + Invite + Member PDAs)]
     P --> V[(Round pot vault)]
@@ -50,7 +50,7 @@ flowchart LR
 
 Solana has no background execution. “Automatic” means that any wallet or keeper can submit a valid crank transaction. The program independently checks every deadline, account, amount, and destination; a keeper has no discretion over who receives funds.
 
-The checked-in web app connects Wallet Standard wallets and decodes Group, Member, Invite, mint, and SPL-vault accounts through confirmed RPC reads on the selected cluster. `web/src/lib/ringio/` hand-encodes every Anchor instruction from the account structs in `lib.rs`; `web/src/hooks/use-ringio-tx.ts` simulates each transaction before any wallet prompt (surfacing decoded program errors), sizes the compute budget, adds a priority fee only on mainnet, requires a one-time risk acknowledgement before the first mainnet signature, and confirms by polling signature status. A per-wallet action planner (`lifecycle.ts`) mirrors the program's state and deadline checks so the UI only offers transitions the program will accept; the program remains the authority.
+The checked-in web app connects Wallet Standard wallets and decodes Group, Member, Invite, mint, and SPL-vault accounts through confirmed RPC reads on the selected cluster. `web/src/lib/ringio/` hand-encodes every instruction from the handlers in `programs/ringio/src/processor.rs`; `web/src/hooks/use-ringio-tx.ts` simulates each transaction before any wallet prompt (surfacing decoded program errors), sizes the compute budget, adds a priority fee only on mainnet, requires a one-time risk acknowledgement before the first mainnet signature, and confirms by polling signature status. A per-wallet action planner (`lifecycle.ts`) mirrors the program's state and deadline checks so the UI only offers transitions the program will accept; the program remains the authority.
 
 ## 4. Lifecycle state machine
 
@@ -162,7 +162,7 @@ For an eligible post-payout default, `cover_default` transfers exactly `c` from 
 
 ## 7. Accounts
 
-Seeds below match the checked-in source. The generated IDL becomes the client contract only after it is produced and reviewed from the same commit.
+Seeds below match the checked-in source. The client builders in `web/src/lib/ringio/` are the interface reference; there is no generated IDL.
 
 | Account | Intended derivation/owner | Important data or constraint |
 | --- | --- | --- |
@@ -184,7 +184,7 @@ The bounded MVP roster is `2..=32`. `Group` stores fixed arrays for the canonica
 
 ## 8. Instruction surface
 
-These are the intended MVP names; confirm exact arguments and account lists against the final IDL.
+These are the MVP instruction names; exact arguments and account lists are in `programs/ringio/src/processor.rs` and the client builders.
 
 | Instruction | Who may call | Critical checks and effects |
 | --- | --- | --- |
@@ -206,7 +206,7 @@ These are the intended MVP names; confirm exact arguments and account lists agai
 | `refund_failed_round` | anyone paying the transaction fee; fixed member destination/ledger | in Defaulted group, refund that member's direct contribution, or restore a covered slice to that member's collateral ledger, once |
 | `refund_collateral` | member signer | terminal/refundable state; transfer only to a token account owned by that signer; once only |
 
-Every handler must validate PDA seeds, account ownership, token mint, token authority, group linkage, signer, lifecycle state, and one-time markers. Anchor constraints are useful but are not a substitute for explicit economic invariants.
+Every handler must validate PDA seeds, account ownership, token mint, token authority, group linkage, signer, lifecycle state, and one-time markers. Account checks mirror the former Anchor constraints but are not a substitute for explicit economic invariants.
 
 ## 9. Required invariants
 
@@ -255,7 +255,7 @@ Adversaries: a malicious creator, one or more colluding members, a keeper, a com
 
 **Implemented discovery manifest:** `GET /api/agent/manifest` returns project/version, the enabled clusters with their program IDs and asset mints, the browser-signed transaction mode, a small supported-action list, the narrow collateral guarantee/exclusions, and `signableTransactions: false`. It reflects configuration only; it is not RPC/deployment evidence. This is capability metadata: it returns no transaction, mutates no state, and does not claim Solana Actions/Blinks compliance.
 
-**Roadmap — transaction-capable action manifest:** add the reviewed IDL hash, required accounts/signers, preconditions, raw-amount semantics, expected postconditions, simulation response, and human-confirmation policy after the transaction client exists. `join_group`, `reveal_secret`, `post_collateral`, and `contribute` remain explicit user-signature actions. A bounded keeper may submit only permissionless cranks.
+**Roadmap — transaction-capable action manifest:** add the reviewed program build hash, required accounts/signers, preconditions, raw-amount semantics, expected postconditions, simulation response, and human-confirmation policy after the transaction client exists. `join_group`, `reveal_secret`, `post_collateral`, and `contribute` remain explicit user-signature actions. A bounded keeper may submit only permissionless cranks.
 
 ## 12. AI discovery and public group codes
 
@@ -273,11 +273,11 @@ The MVP's canonical evidence is the `Member` state plus emitted events: accepted
 
 ## 14. Implemented MVP versus roadmap
 
-Repository snapshot on 2026-08-12: Rust 1.89 formatting, 16/16 unit tests, clippy with warnings denied, IDL generation, and SBF build pass. The exact local SBF artifact hash matches the dumped devnet bytecode. Devnet deployment, canonical config initialization, confirmed-RPC decoding, deterministic AI matching, and homepage/API smoke checks succeeded. A repo-external three-keypair harness completed a funded two-member, two-round lifecycle using Circle devnet USDC: join/reveal/order, collateral, direct contributions, two payouts, an expected pre-grace default-cover rejection, post-grace collateral coverage, `Completed`, zero pot/collateral vault balances, and participant-balance conservation were asserted. Node 20.19.4 frontend lint, typecheck, build, 17/17 duration/matcher/privacy/binary-decoder tests, and dependency audit with zero reported vulnerabilities pass. Live OpenRouter evidence and exhaustive adversarial CPI coverage remain open.
+Repository snapshot on 2026-08-12 (Anchor build): Rust 1.89 formatting, 16/16 unit tests, clippy with warnings denied, IDL generation, and SBF build passed, and the local SBF artifact hash matched the dumped devnet bytecode. After the Pinocchio rewrite, the unit tests, the LiteSVM lifecycle suite, and the differential suite (including forged/substituted accounts, replays, malformed data, and a 32-member circle) pass against the new build. Devnet deployment, canonical config initialization, confirmed-RPC decoding, deterministic AI matching, and homepage/API smoke checks succeeded. A repo-external three-keypair harness completed a funded two-member, two-round lifecycle using Circle devnet USDC: join/reveal/order, collateral, direct contributions, two payouts, an expected pre-grace default-cover rejection, post-grace collateral coverage, `Completed`, zero pot/collateral vault balances, and participant-balance conservation were asserted. Node 20.19.4 frontend lint, typecheck, build, 17/17 duration/matcher/privacy/binary-decoder tests, and dependency audit with zero reported vulnerabilities pass. Live OpenRouter evidence, fuzzing, and a funded devnet run on the Pinocchio build remain open.
 
 | Capability | Checked in now | Roadmap / not implied |
 | --- | --- | --- |
-| Invite-only fixed roster | Anchor source, generated IDL, state/unit checks, funded two-member devnet completion, browser invite/join builders | Identity verification, replacement membership |
+| Invite-only fixed roster | Program source, state/unit checks, LiteSVM suites, funded two-member devnet completion, browser invite/join builders | Identity verification, replacement membership |
 | Group discovery | Direct devnet Group decoding with PDA-derived public codes; deterministic matcher; optional OpenRouter explanation; no mock fallback | Signed creator metadata, scalable indexer, moderation, production rate limiting |
 | Commit-reveal order | Deterministic deployed instruction, pure ordering tests, browser ceremony with wallet-signature-derived secrets (local backup, on-chain commitment check before reveal) | VRF/liveness-resistant randomness |
 | SPL contributions and PDA vaults | Classic Token Program constraints, conservation tests, funded direct contributions and payouts, terminal zero-vault assertions | Exhaustive malicious-account CPI tests, Token-2022, yield-bearing vaults, swaps |
@@ -285,8 +285,8 @@ Repository snapshot on 2026-08-12: Rust 1.89 formatting, 16/16 unit tests, clipp
 | Permissionless round/default crank | Independent keeper finalized order, activated, covered default, and settled payouts | Hosted keeper, monitoring/SLA, autonomous custody |
 | Dashboard | Real Group/Member/Invite/vault reads on mainnet-beta, devnet, or testnet; per-wallet action planner; simulated, wallet-signed transactions for every user and crank instruction; LiteSVM lifecycle tests against deployed bytecode | Production indexer, notifications, hosted keeper |
 | Contribution evidence | Completed funded devnet Group with direct versus collateral resolution in member state | Indexed history, portable Trust Passport, cross-protocol attestations |
-| Agent capability metadata | Read-only `/api/agent/manifest`; no signable transactions | Transaction-capable manifest, reviewed IDL binding, and delegated policies |
+| Agent capability metadata | Read-only `/api/agent/manifest`; no signable transactions | Transaction-capable manifest, reviewed interface binding, and delegated policies |
 
 ## 15. Mainnet exit criteria
 
-Devnet completion is not production readiness. Before mainnet: reconcile docs with IDL; test every transition and adversarial account substitution; fuzz arithmetic/state transitions; independently review token and authority paths; define upgrade/pause governance; measure transaction/account costs at maximum roster size; publish program ID and verified build; complete legal/regulatory review; run a capped-value pilot; and document a recovery procedure that does not invent unsafe post-payout refunds.
+Devnet completion is not production readiness. Before mainnet: reconcile docs with the program interface; extend transition and adversarial account-substitution coverage; fuzz arithmetic/state transitions; independently review token and authority paths; define upgrade/pause governance; re-measure transaction/account costs at maximum roster size on a live cluster; publish program ID and verified build; complete legal/regulatory review; run a capped-value pilot; and document a recovery procedure that does not invent unsafe post-payout refunds.
