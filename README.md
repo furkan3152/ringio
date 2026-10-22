@@ -1,5 +1,7 @@
 # Ringio
 
+[![Ringio checks](https://github.com/furkan3152/ringio/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/furkan3152/ringio/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **Save together. Get paid in turns.** Ringio is an invite-only rotating savings circle (ROSCA, _Altın Günü_) on Solana. Members contribute the same USDC amount every turn, one member receives the pot each turn, and members who are paid early lock collateral for the turns they still owe — so "take the pot and disappear" is covered by the program, not by trust.
 
 > Ringio is **pre-audit beta software**. It runs on Solana devnet today and is ready to be deployed to mainnet-beta and testnet (see below). Protection covers missed payments by members who were already paid out; it does not remove smart-contract, stablecoin, or wallet risk.
@@ -13,6 +15,14 @@
 - **Fair payout order.** Members commit a secret when joining (derived from a wallet signature, so it can be re-derived on any device); once everyone reveals, the program derives the order.
 - **Cheap to deploy.** The program is a ~92 KB [Pinocchio](https://github.com/anza-xyz/pinocchio) build with the same interface as the original 657 KB Anchor build: deploying locks ~0.64 SOL of rent instead of ~4.6 SOL. Every feature is kept; a differential test runs over a hundred normal and adversarial transactions against both builds and requires identical results, error codes, events, and account bytes.
 - **Redesigned interface.** Dark "gold ring" design, live circle dial, lifecycle stepper, member ledger, vault balances, mobile navigation, and an optional AI/rules guide that only ranks circles really forming on the selected network.
+
+## Tech stack
+
+- **On-chain program:** Rust 1.89, [Pinocchio](https://github.com/anza-xyz/pinocchio) (zero-dependency Solana program framework) with an Anchor-compatible interface, SPL Token custody in PDA vaults, commit–reveal payout ordering.
+- **Web app:** Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, `@solana/web3.js` and Wallet Standard wallets (Phantom, Solflare, Backpack).
+- **Testing:** Rust unit tests, Node test runner for the client library, [LiteSVM](https://github.com/LiteSVM/litesvm) lifecycle and differential (Anchor vs. Pinocchio) suites, and a funded devnet end-to-end script.
+- **CI:** GitHub Actions running web lint/types/tests/build with a high-severity `npm audit` gate, the SBF build with a program-size budget, and Rust fmt/tests/clippy.
+- **Optional AI:** server-side circle matching through OpenRouter, with a deterministic local matcher as the default.
 
 ## Lifecycle
 
@@ -58,6 +68,8 @@ cp .env.example web/.env.local   # optional overrides
 npm run dev                      # http://localhost:3000
 ```
 
+Every variable in `.env.example` is optional and documented inline: the enabled networks and default network, browser RPC URLs, program IDs and USDC mints per network, server-only RPC overrides, and the optional OpenRouter settings. `NEXT_PUBLIC_` values are shipped to the browser, so never put a private key or a private RPC key there.
+
 Use a Wallet Standard wallet (Phantom, Solflare, Backpack). On devnet, get SOL from [faucet.solana.com](https://faucet.solana.com) and test USDC from [faucet.circle.com](https://faucet.circle.com). Custom turn lengths in minutes make it easy to run a whole circle in a few minutes.
 
 ## Verification
@@ -95,3 +107,11 @@ One immutable settlement mint per circle, classic SPL Token only, PDA vaults wit
 ## Grant
 
 This project is being prepared for Superteam's [Agentic Engineering Grant](https://superteam.fun/earn/grants/agentic-engineering). `docs/grant-application.md` keeps verified evidence separate from planned milestones.
+
+## License
+
+[MIT](LICENSE)
+
+---
+
+Built by Furkan Akdogan ([@furkan3152](https://github.com/furkan3152)).
