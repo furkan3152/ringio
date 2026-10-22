@@ -1,29 +1,19 @@
-export const MAX_PERIOD_SECONDS = 366 * 24 * 60 * 60;
+export type DurationUnit = "minutes" | "hours" | "days" | "weeks";
+export type DurationValue = { value: string; unit: DurationUnit };
 
-export type PeriodPreset = "weekly" | "monthly";
-export type CustomPeriodUnit = "minutes" | "hours" | "days" | "weeks";
-
-const UNIT_SECONDS: Readonly<Record<CustomPeriodUnit, number>> = {
+const UNIT_SECONDS: Readonly<Record<DurationUnit, number>> = {
   minutes: 60,
   hours: 60 * 60,
   days: 24 * 60 * 60,
   weeks: 7 * 24 * 60 * 60,
 };
 
-export function presetPeriodSeconds(preset: PeriodPreset): number {
-  return preset === "weekly" ? 7 * 24 * 60 * 60 : 30 * 24 * 60 * 60;
-}
-
-export function customPeriodSeconds(rawValue: string, unit: CustomPeriodUnit): number | null {
-  const normalized = rawValue.trim();
-  if (!/^\d+$/.test(normalized)) return null;
-
-  const value = Number(normalized);
+/** Converts a whole-number duration to seconds; null for empty, fractional, zero, or unsafe input. */
+export function durationSeconds(duration: DurationValue): number | null {
+  if (!/^\d+$/.test(duration.value.trim())) return null;
+  const value = Number(duration.value);
   if (!Number.isSafeInteger(value) || value <= 0) return null;
-
-  const seconds = value * UNIT_SECONDS[unit];
-  if (!Number.isSafeInteger(seconds) || seconds > MAX_PERIOD_SECONDS) return null;
-  return seconds;
+  return value * UNIT_SECONDS[duration.unit];
 }
 
 export function periodLabel(seconds: number, locale: "en" | "tr" = "en"): string {
