@@ -9,13 +9,14 @@ import { PublicKey } from "@solana/web3.js";
 import { ChevronDown, CircleDollarSign, Info, Minus, Plus, ShieldCheck, TriangleAlert } from "lucide-react";
 
 import { useNetwork } from "@/components/providers/network-provider";
-import { DurationInput, durationSeconds, type DurationValue } from "@/components/ui/duration-input";
+import { DurationInput } from "@/components/ui/duration-input";
 import { Address, EmptyState, formatDuration } from "@/components/ui/primitives";
 import { useChainQuery } from "@/hooks/use-chain-query";
 import { useCommitSecret } from "@/hooks/use-commit-secret";
 import { useNow } from "@/hooks/use-now";
 import { useProgramId, useProgramStatus, useWalletBalances } from "@/hooks/use-ringio";
 import { useRingioTx } from "@/hooks/use-ringio-tx";
+import { durationSeconds, type DurationValue } from "@/lib/duration";
 import { setCircleLabel } from "@/lib/local-labels";
 import { formatTokenAmount, parseTokenAmount } from "@/lib/ringio/amounts";
 import { MAX_MEMBERS, MIN_MEMBERS, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@/lib/ringio/constants";

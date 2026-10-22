@@ -1,22 +1,6 @@
 "use client";
 
-export type DurationUnit = "minutes" | "hours" | "days" | "weeks";
-
-export const UNIT_SECONDS: Record<DurationUnit, number> = {
-  minutes: 60,
-  hours: 3_600,
-  days: 86_400,
-  weeks: 604_800,
-};
-
-export type DurationValue = { value: string; unit: DurationUnit };
-
-export function durationSeconds(duration: DurationValue): number | null {
-  if (!/^\d+$/.test(duration.value.trim())) return null;
-  const value = Number(duration.value);
-  if (!Number.isSafeInteger(value) || value <= 0) return null;
-  return value * UNIT_SECONDS[duration.unit];
-}
+import type { DurationUnit, DurationValue } from "@/lib/duration";
 
 export function DurationInput({
   id,

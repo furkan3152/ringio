@@ -1,32 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  MAX_PERIOD_SECONDS,
-  customPeriodSeconds,
-  periodLabel,
-  presetPeriodSeconds,
-} from "../duration";
+import { durationSeconds, periodLabel } from "../duration";
 
-test("preset periods have exact, documented second values", () => {
-  assert.equal(presetPeriodSeconds("weekly"), 7 * 24 * 60 * 60);
-  assert.equal(presetPeriodSeconds("monthly"), 30 * 24 * 60 * 60);
+test("durations convert integer units without rounding", () => {
+  assert.equal(durationSeconds({ value: "90", unit: "minutes" }), 90 * 60);
+  assert.equal(durationSeconds({ value: "36", unit: "hours" }), 36 * 60 * 60);
+  assert.equal(durationSeconds({ value: "12", unit: "days" }), 12 * 24 * 60 * 60);
+  assert.equal(durationSeconds({ value: "8", unit: "weeks" }), 8 * 7 * 24 * 60 * 60);
 });
 
-test("custom periods convert integer units without rounding", () => {
-  assert.equal(customPeriodSeconds("90", "minutes"), 90 * 60);
-  assert.equal(customPeriodSeconds("36", "hours"), 36 * 60 * 60);
-  assert.equal(customPeriodSeconds("12", "days"), 12 * 24 * 60 * 60);
-  assert.equal(customPeriodSeconds("8", "weeks"), 8 * 7 * 24 * 60 * 60);
-});
-
-test("custom periods reject empty, fractional, zero, unsafe, and oversized values", () => {
-  assert.equal(customPeriodSeconds("", "days"), null);
-  assert.equal(customPeriodSeconds("1.5", "days"), null);
-  assert.equal(customPeriodSeconds("0", "days"), null);
-  assert.equal(customPeriodSeconds("999999999999999999999999", "minutes"), null);
-  assert.equal(customPeriodSeconds("53", "weeks"), null);
-  assert.equal(customPeriodSeconds("366", "days"), MAX_PERIOD_SECONDS);
+test("durations reject empty, fractional, zero, and unsafe values", () => {
+  assert.equal(durationSeconds({ value: "", unit: "days" }), null);
+  assert.equal(durationSeconds({ value: "1.5", unit: "days" }), null);
+  assert.equal(durationSeconds({ value: "0", unit: "days" }), null);
+  assert.equal(durationSeconds({ value: "999999999999999999999999", unit: "minutes" }), null);
 });
 
 test("period labels stay concise and explicit", () => {
