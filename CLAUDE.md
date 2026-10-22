@@ -1,14 +1,17 @@
 # Ringio project context
 
-Ringio is an Anchor + Next.js Solana dApp for rotating USDC savings circles. Treat every value-moving path as security-critical.
+Ringio is a Pinocchio (Anchor-compatible interface) + Next.js Solana dApp for rotating USDC savings circles. Treat every value-moving path as security-critical.
 
 ## Commands
 
 - `npm --prefix web ci` installs the pinned browser package from the lockfile.
 - `npm run dev` starts the web app.
 - `npm run check` runs the safe local validation suite.
+- `npm --prefix web run test:svm` runs the UI instruction builders against the local build (or the deployed devnet bytecode) in LiteSVM, plus the Anchor-equivalence differential suite when `target/deploy/ringio.so` exists.
+- `npm --prefix web run network:status` reports program/config readiness on mainnet-beta, devnet, and testnet.
 - `cargo test -p ringio` runs pure Rust program tests.
-- `anchor build` and `anchor test` require the toolchain in `docs/devnet-runbook.md`.
+- `cargo build-sbf --manifest-path programs/ringio/Cargo.toml` builds the program (Agave CLI 2.3.x); `npm --prefix web run program:cost` prints the SOL needed to deploy it.
+- The program's instruction/account/event discriminators, Borsh layouts, account order, and error codes must stay identical to the original Anchor program; the differential suite enforces this.
 
 ## Invariants
 
@@ -23,4 +26,4 @@ Ringio is an Anchor + Next.js Solana dApp for rotating USDC savings circles. Tre
 
 ## Product language
 
-Use “circle,” “turn,” “contribution,” “payout,” and “protection.” Avoid claiming guaranteed yield, creditworthiness, or total safety. Display devnet and the asset mint near every signing flow.
+Use “circle,” “turn,” “contribution,” “payout,” and “protection.” Avoid claiming guaranteed yield, creditworthiness, or total safety. Display the active network (mainnet-beta, devnet, or testnet) and the asset mint near every signing flow.

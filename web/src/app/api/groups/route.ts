@@ -7,7 +7,8 @@ import {
   isGroupEligible,
   normalizeGroupCode,
 } from "@/lib/groups/catalog";
-import { fetchOnchainGroups, RINGIO_PROGRAM_ID } from "@/lib/groups/onchain";
+import { fetchOnchainGroups, ProgramUnavailableError, programIdFor } from "@/lib/groups/onchain";
+import { DEFAULT_CLUSTER, ENABLED_CLUSTERS, parseClusterId } from "@/lib/solana/networks";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -19,78 +20,66 @@ const HEADERS = {
   "X-Content-Type-Options": "nosniff",
 };
 
+function error(status: number, code: string, message: string) {
+  return NextResponse.json(
+    { code, message, groups: [] },
+    { status, headers: { ...HEADERS, "Cache-Control": "no-store" } },
+  );
+}
+
+/**
+ * GET /api/groups?cluster=devnet[&wallet=PUBKEY][&code=RNG-…][&eligibleOnly=true]
+ * Without `wallet`, lists circles that are still forming (discovery).
+ */
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const requestedCode = url.searchParams.get("code");
-  const requestedWallet = url.searchParams.get("wallet");
+  const requestedCluster = url.searchParams.get("cluster");
+  const cluster = requestedCluster === null ? DEFAULT_CLUSTER : parseClusterId(requestedCluster);
+  if (!cluster || !ENABLED_CLUSTERS.includes(cluster)) {
+    return error(400, "INVALID_CLUSTER", `cluster must be one of ${ENABLED_CLUSTERS.join(", ")}.`);
+  }
 
-  let wallet: string | null = null;
+  let wallet: string | undefined;
+  const requestedWallet = url.searchParams.get("wallet");
   if (requestedWallet !== null) {
     try {
       wallet = new PublicKey(requestedWallet).toBase58();
     } catch {
-      return NextResponse.json(
-        { code: "INVALID_WALLET", message: "wallet must be a valid Solana public key." },
-        { status: 400, headers: HEADERS },
-      );
+      return error(400, "INVALID_WALLET", "wallet must be a valid Solana public key.");
     }
   }
 
   try {
-    const allGroups = await fetchOnchainGroups();
-    const walletGroups = wallet
-      ? allGroups.filter((group) => group.members.some((member) => member.wallet === wallet))
-      : allGroups;
+    const groups = await fetchOnchainGroups(cluster, { wallet });
+    const meta = {
+      catalogMode: `solana-${cluster}`,
+      cluster,
+      programId: programIdFor(cluster).toBase58(),
+      groupCodeNotice: GROUP_CODE_NOTICE,
+    };
 
+    const requestedCode = url.searchParams.get("code");
     if (requestedCode !== null) {
       const normalizedCode = normalizeGroupCode(requestedCode);
       if (!normalizedCode) {
-        return NextResponse.json(
-          { code: "INVALID_GROUP_CODE", message: "Group codes use the RNG- plus 12 hexadecimal character format." },
-          { status: 400, headers: HEADERS },
-        );
+        return error(400, "INVALID_GROUP_CODE", "Group codes use the RNG- plus 12 hexadecimal character format.");
       }
-      const group = getPublicGroupByCode(walletGroups, normalizedCode);
-      if (!group) {
-        return NextResponse.json(
-          { code: "GROUP_NOT_FOUND", message: `No on-chain Group account resolves to ${normalizedCode}.` },
-          { status: 404, headers: HEADERS },
-        );
-      }
-      return NextResponse.json(
-        {
-          catalogMode: "solana-devnet",
-          programId: RINGIO_PROGRAM_ID.toBase58(),
-          group,
-          eligible: isGroupEligible(group),
-          groupCodeNotice: GROUP_CODE_NOTICE,
-        },
-        { headers: HEADERS },
-      );
+      const group = getPublicGroupByCode(groups, normalizedCode);
+      if (!group) return error(404, "GROUP_NOT_FOUND", `No forming Group account resolves to ${normalizedCode}.`);
+      return NextResponse.json({ ...meta, group, eligible: isGroupEligible(group) }, { headers: HEADERS });
     }
 
     const eligibleOnly = url.searchParams.get("eligibleOnly") === "true";
-    const groups = eligibleOnly ? getEligiblePublicGroups(walletGroups) : walletGroups;
+    const listed = eligibleOnly ? getEligiblePublicGroups(groups) : groups;
     return NextResponse.json(
-      {
-        catalogMode: "solana-devnet",
-        programId: RINGIO_PROGRAM_ID.toBase58(),
-        groups,
-        total: groups.length,
-        eligibleTotal: getEligiblePublicGroups(walletGroups).length,
-        groupCodeNotice: GROUP_CODE_NOTICE,
-      },
+      { ...meta, groups: listed, total: listed.length, eligibleTotal: getEligiblePublicGroups(groups).length },
       { headers: HEADERS },
     );
-  } catch (error) {
-    console.error("Failed to load Ringio Group accounts", error);
-    return NextResponse.json(
-      {
-        code: "SOLANA_RPC_UNAVAILABLE",
-        message: "Ringio could not verify devnet Group accounts. No fallback or mock groups were returned.",
-        groups: [],
-      },
-      { status: 503, headers: { ...HEADERS, "Cache-Control": "no-store" } },
-    );
+  } catch (caught) {
+    if (caught instanceof ProgramUnavailableError) {
+      return error(404, "PROGRAM_UNAVAILABLE", caught.message);
+    }
+    console.error("Failed to load Ringio Group accounts", caught);
+    return error(503, "SOLANA_RPC_UNAVAILABLE", `Ringio could not verify ${cluster} Group accounts. No mock data was returned.`);
   }
 }

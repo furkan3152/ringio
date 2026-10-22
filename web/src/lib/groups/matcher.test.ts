@@ -116,7 +116,7 @@ test("an explicit maximum contribution is a hard eligibility constraint", () => 
     groups: TEST_GROUPS,
   });
   assert.deepEqual(result.matches, []);
-  assert.ok(result.answer.includes("no eligible on-chain devnet groups"));
+  assert.ok(result.answer.includes("no eligible on-chain groups on this network"));
 });
 
 test("fallback output is deterministic for the same input and account set", () => {

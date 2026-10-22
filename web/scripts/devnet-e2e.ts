@@ -10,15 +10,30 @@ import {
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { AnchorProvider, BN, Program, Wallet, type Idl } from "@coral-xyz/anchor";
 import {
   Connection,
   Keypair,
   PublicKey,
-  SYSVAR_RENT_PUBKEY,
-  SystemProgram,
-  type ConfirmOptions,
+  Transaction,
+  VersionedTransaction,
+  type TransactionInstruction,
 } from "@solana/web3.js";
+
+import {
+  abortUncoveredRoundIx,
+  activateGroupIx,
+  cancelGroupIx,
+  contributeIx,
+  coverDefaultIx,
+  createGroupIx,
+  finalizeOrderIx,
+  inviteMemberIx,
+  joinGroupIx,
+  postCollateralIx,
+  refundCollateralIx,
+  revealSecretIx,
+  settleRoundIx,
+} from "../src/lib/ringio/instructions";
 
 const PROGRAM_ID = new PublicKey("JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy");
 const USDC_MINT = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
@@ -89,12 +104,8 @@ type MemberState = {
   lastResolutionKind: number;
 };
 
-type TransactionBuilder = {
-  accountsStrict(accounts: Record<string, PublicKey>): TransactionBuilder;
-  signers(signers: Keypair[]): TransactionBuilder;
-  simulate(): Promise<unknown>;
-  rpc(options?: ConfirmOptions): Promise<string>;
-};
+/** Fee payer and connection shared by every submitted transaction. */
+type Sender = { connection: Connection; payer: Keypair };
 
 function option(name: string): string | undefined {
   const index = process.argv.indexOf(name);
@@ -204,15 +215,13 @@ function u64(value: bigint): Buffer {
   return result;
 }
 
-function commitment(group: PublicKey, member: PublicKey, secret: Buffer): number[] {
-  return Array.from(
-    createHash("sha256")
-      .update(COMMITMENT_DOMAIN)
-      .update(group.toBuffer())
-      .update(member.toBuffer())
-      .update(secret)
-      .digest(),
-  );
+function commitment(group: PublicKey, member: PublicKey, secret: Buffer): Uint8Array {
+  return createHash("sha256")
+    .update(COMMITMENT_DOMAIN)
+    .update(group.toBuffer())
+    .update(member.toBuffer())
+    .update(secret)
+    .digest();
 }
 
 function memberPda(group: PublicKey, wallet: PublicKey): PublicKey {
@@ -309,41 +318,64 @@ async function waitForFinalized(connection: Connection, signature: string): Prom
   throw new Error(`Transaction did not finalize in time: ${signature}`);
 }
 
+async function signedTransaction(
+  sender: Sender,
+  instruction: TransactionInstruction,
+  signers: Keypair[],
+): Promise<Transaction> {
+  const { blockhash, lastValidBlockHeight } = await sender.connection.getLatestBlockhash("confirmed");
+  const transaction = new Transaction({ feePayer: sender.payer.publicKey, blockhash, lastValidBlockHeight }).add(instruction);
+  const extra = signers.filter((signer) => !signer.publicKey.equals(sender.payer.publicKey));
+  transaction.sign(sender.payer, ...extra);
+  return transaction;
+}
+
+async function simulate(sender: Sender, transaction: Transaction) {
+  const result = await sender.connection.simulateTransaction(VersionedTransaction.deserialize(transaction.serialize()), {
+    sigVerify: true,
+    commitment: "confirmed",
+  });
+  return result.value;
+}
+
 async function simulateAndSend(
-  connection: Connection,
+  sender: Sender,
   label: string,
-  builder: TransactionBuilder,
+  instruction: TransactionInstruction,
   signers: Keypair[],
   state: E2EState,
   statePath: string,
 ): Promise<string> {
-  // Anchor's legacy-transaction simulator re-signs with only the additional
-  // signers when sigVerify is enabled, which can discard the provider-wallet
-  // signature. Simulate unsigned (the message still retains signer flags), then
-  // require every real signature on the submitted transaction below.
-  await builder.simulate();
-  const signed = signers.length > 0 ? builder.signers(signers) : builder;
-  const signature = await signed.rpc({ commitment: "confirmed", skipPreflight: false });
-  await waitForFinalized(connection, signature);
+  // Simulate the exact signed bytes first, then submit them with preflight.
+  const transaction = await signedTransaction(sender, instruction, signers);
+  const simulation = await simulate(sender, transaction);
+  if (simulation.err) {
+    throw new Error(`${label} simulation failed: ${JSON.stringify(simulation.err)}\n${(simulation.logs ?? []).join("\n")}`);
+  }
+  const signature = await sender.connection.sendRawTransaction(transaction.serialize(), {
+    skipPreflight: false,
+    preflightCommitment: "confirmed",
+  });
+  await waitForFinalized(sender.connection, signature);
   state.signatures[label] = signature;
   writeState(statePath, state);
   console.log(`${label}: ${signature}`);
   return signature;
 }
 
-async function expectSimulationFailure(label: string, builder: TransactionBuilder, signers: Keypair[]): Promise<void> {
-  try {
-    void signers;
-    await builder.simulate();
-  } catch (error) {
-    const details = describeError(error);
-    if (!details.includes("GracePeriodActive") && !details.includes("0x1785") && !details.includes('"Custom":6021')) {
-      throw new Error(`${label} failed for an unexpected reason: ${details}`);
-    }
-    console.log(`${label}: expected GracePeriodActive rejection`);
-    return;
+async function expectSimulationFailure(
+  sender: Sender,
+  label: string,
+  instruction: TransactionInstruction,
+  signers: Keypair[],
+): Promise<void> {
+  const simulation = await simulate(sender, await signedTransaction(sender, instruction, signers));
+  if (!simulation.err) throw new Error(`${label} unexpectedly succeeded`);
+  const details = `${JSON.stringify(simulation.err)}\n${(simulation.logs ?? []).join("\n")}`;
+  if (!details.includes('"Custom":6021') && !details.includes("0x1785")) {
+    throw new Error(`${label} failed for an unexpected reason: ${details}`);
   }
-  throw new Error(`${label} unexpectedly succeeded`);
+  console.log(`${label}: expected GracePeriodActive rejection`);
 }
 
 async function chainTimestamp(connection: Connection): Promise<number> {
@@ -400,22 +432,8 @@ async function main(): Promise<void> {
   const participantAta = associatedTokenAddress(participant.publicKey);
   const connection = new Connection(rpc, "confirmed");
 
-  const idlPath = resolve(repositoryRoot, "target/idl/ringio.json");
-  if (!existsSync(idlPath)) throw new Error("Missing generated IDL; run anchor build first");
-  const idl = JSON.parse(readFileSync(idlPath, "utf8")) as Idl;
-  if (idl.address !== PROGRAM_ID.toBase58()) throw new Error("Generated IDL program id mismatch");
-  const provider = new AnchorProvider(connection, new Wallet(deployer), {
-    commitment: "confirmed",
-    preflightCommitment: "confirmed",
-    skipPreflight: false,
-  });
-  const program = new Program(idl, provider);
-  const methods = program.methods as unknown as Record<string, (...args: unknown[]) => TransactionBuilder>;
-  const method = (name: string, ...args: unknown[]): TransactionBuilder => {
-    const factory = methods[name];
-    if (!factory) throw new Error(`Generated IDL is missing ${name}`);
-    return factory(...args);
-  };
+  const sender: Sender = { connection, payer: deployer };
+  const refs = { programId: PROGRAM_ID, group, mint: USDC_MINT };
 
   const configAccount = await connection.getAccountInfo(config, "confirmed");
   const mintAccount = await connection.getAccountInfo(USDC_MINT, "confirmed");
@@ -432,9 +450,9 @@ async function main(): Promise<void> {
       return;
     }
     await simulateAndSend(
-      connection,
+      sender,
       "cancelGroup",
-      method("cancelGroup").accountsStrict({ config, group, caller: deployer.publicKey }),
+      cancelGroupIx({ programId: PROGRAM_ID, group, caller: deployer.publicKey }),
       [],
       state,
       statePath,
@@ -455,14 +473,9 @@ async function main(): Promise<void> {
       await waitPastGrace(connection, group);
       const delinquentWallet = current.members[0];
       await simulateAndSend(
-        connection,
+        sender,
         "abortUncoveredRound",
-        method("abortUncoveredRound").accountsStrict({
-          config,
-          group,
-          delinquentMember: memberPda(group, delinquentWallet),
-          keeper: keeper.publicKey,
-        }),
+        abortUncoveredRoundIx({ programId: PROGRAM_ID, group, delinquentWallet, keeper: keeper.publicKey }),
         [keeper],
         state,
         statePath,
@@ -481,17 +494,9 @@ async function main(): Promise<void> {
       const memberState = await fetchMember(connection, actor.member);
       if (memberState.collateralLocked === BigInt(0)) continue;
       await simulateAndSend(
-        connection,
+        sender,
         `refundCollateral-${actor.keypair.publicKey.equals(deployer.publicKey) ? "creator" : "participant"}`,
-        method("refundCollateral").accountsStrict({
-          group,
-          member: actor.member,
-          collateralVault,
-          memberToken: actor.ata,
-          mint: USDC_MINT,
-          participant: actor.keypair.publicKey,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        }),
+        refundCollateralIx({ ...refs, participant: actor.keypair.publicKey }),
         actor.keypair.publicKey.equals(deployer.publicKey) ? [] : [actor.keypair],
         state,
         statePath,
@@ -508,29 +513,21 @@ async function main(): Promise<void> {
     if (!current) {
       const now = Math.floor(Date.now() / 1_000);
       await simulateAndSend(
-        connection,
+        sender,
         "createGroup",
-        method("createGroup", {
-          groupId: new BN(state.groupId),
-          memberCount: MEMBER_COUNT,
-          contributionAmount: new BN(CONTRIBUTION_RAW.toString()),
-          periodSeconds: new BN(PERIOD_SECONDS),
-          graceSeconds: new BN(GRACE_SECONDS),
-          joinDeadline: new BN(now + PHASE_WINDOW_SECONDS),
-          revealWindowSeconds: new BN(PHASE_WINDOW_SECONDS),
-          collateralWindowSeconds: new BN(PHASE_WINDOW_SECONDS),
-          creatorCommitment: commitment(group, deployer.publicKey, Buffer.from(state.creatorSecretHex, "hex")),
-        }).accountsStrict({
-          config,
-          group,
-          creatorMember,
-          potVault,
-          collateralVault,
-          mint: USDC_MINT,
+        createGroupIx({
+          programId: PROGRAM_ID,
           creator: deployer.publicKey,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          systemProgram: SystemProgram.programId,
-          rent: SYSVAR_RENT_PUBKEY,
+          mint: USDC_MINT,
+          groupId,
+          memberCount: MEMBER_COUNT,
+          contributionAmount: CONTRIBUTION_RAW,
+          periodSeconds: PERIOD_SECONDS,
+          graceSeconds: GRACE_SECONDS,
+          joinDeadline: now + PHASE_WINDOW_SECONDS,
+          revealWindowSeconds: PHASE_WINDOW_SECONDS,
+          collateralWindowSeconds: PHASE_WINDOW_SECONDS,
+          creatorCommitment: commitment(group, deployer.publicKey, Buffer.from(state.creatorSecretHex, "hex")),
         }),
         [],
         state,
@@ -553,33 +550,22 @@ async function main(): Promise<void> {
     if (current.status === "forming") {
       if (!(await connection.getAccountInfo(invite, "confirmed"))) {
         await simulateAndSend(
-          connection,
+          sender,
           "inviteMember",
-          method("inviteMember", participant.publicKey).accountsStrict({
-            config,
-            group,
-            invite,
-            creator: deployer.publicKey,
-            systemProgram: SystemProgram.programId,
-          }),
+          inviteMemberIx({ programId: PROGRAM_ID, group, creator: deployer.publicKey, invitee: participant.publicKey }),
           [],
           state,
           statePath,
         );
       }
       await simulateAndSend(
-        connection,
+        sender,
         "joinGroup",
-        method(
-          "joinGroup",
-          commitment(group, participant.publicKey, Buffer.from(state.participantSecretHex, "hex")),
-        ).accountsStrict({
-          config,
+        joinGroupIx({
+          programId: PROGRAM_ID,
           group,
-          invite,
-          member: participantMember,
           participant: participant.publicKey,
-          systemProgram: SystemProgram.programId,
+          commitment: commitment(group, participant.publicKey, Buffer.from(state.participantSecretHex, "hex")),
         }),
         [participant],
         state,
@@ -594,14 +580,9 @@ async function main(): Promise<void> {
       const participantState = await fetchMember(connection, participantMember);
       if (!creatorState.revealed) {
         await simulateAndSend(
-          connection,
+          sender,
           "revealCreator",
-          method("revealSecret", Array.from(Buffer.from(state.creatorSecretHex, "hex"))).accountsStrict({
-            config,
-            group,
-            member: creatorMember,
-            participant: deployer.publicKey,
-          }),
+          revealSecretIx({ programId: PROGRAM_ID, group, participant: deployer.publicKey, secret: Buffer.from(state.creatorSecretHex, "hex") }),
           [],
           state,
           statePath,
@@ -609,14 +590,9 @@ async function main(): Promise<void> {
       }
       if (!participantState.revealed) {
         await simulateAndSend(
-          connection,
+          sender,
           "revealParticipant",
-          method("revealSecret", Array.from(Buffer.from(state.participantSecretHex, "hex"))).accountsStrict({
-            config,
-            group,
-            member: participantMember,
-            participant: participant.publicKey,
-          }),
+          revealSecretIx({ programId: PROGRAM_ID, group, participant: participant.publicKey, secret: Buffer.from(state.participantSecretHex, "hex") }),
           [participant],
           state,
           statePath,
@@ -625,9 +601,9 @@ async function main(): Promise<void> {
       current = await fetchGroup(connection, group);
       if (current?.status === "revealing") {
         await simulateAndSend(
-          connection,
+          sender,
           "finalizeOrder",
-          method("finalizeOrder").accountsStrict({ config, group }),
+          finalizeOrderIx({ programId: PROGRAM_ID, group }),
           [],
           state,
           statePath,
@@ -672,18 +648,9 @@ async function main(): Promise<void> {
     const participantState = await fetchMember(connection, participantMember);
     if (!creatorState.collateralPosted) {
       await simulateAndSend(
-        connection,
+        sender,
         "postCollateralCreator",
-        method("postCollateral").accountsStrict({
-          config,
-          group,
-          member: creatorMember,
-          source: creatorAta,
-          collateralVault,
-          mint: USDC_MINT,
-          participant: deployer.publicKey,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        }),
+        postCollateralIx({ ...refs, participant: deployer.publicKey }),
         [],
         state,
         statePath,
@@ -691,27 +658,18 @@ async function main(): Promise<void> {
     }
     if (!participantState.collateralPosted) {
       await simulateAndSend(
-        connection,
+        sender,
         "postCollateralParticipant",
-        method("postCollateral").accountsStrict({
-          config,
-          group,
-          member: participantMember,
-          source: participantAta,
-          collateralVault,
-          mint: USDC_MINT,
-          participant: participant.publicKey,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        }),
+        postCollateralIx({ ...refs, participant: participant.publicKey }),
         [participant],
         state,
         statePath,
       );
     }
     await simulateAndSend(
-      connection,
+      sender,
       "activateGroup",
-      method("activateGroup").accountsStrict({ config, group, collateralVault }),
+      activateGroupIx({ programId: PROGRAM_ID, group }),
       [],
       state,
       statePath,
@@ -735,19 +693,9 @@ async function main(): Promise<void> {
       const memberState = await fetchMember(connection, actor.member);
       if (memberState.lastContributedRound !== 0) {
         await simulateAndSend(
-          connection,
+          sender,
           `contributeRound0-${wallet.equals(deployer.publicKey) ? "creator" : "participant"}`,
-          method("contribute").accountsStrict({
-            config,
-            group,
-            member: actor.member,
-            source: actor.ata,
-            potVault,
-            collateralVault,
-            mint: USDC_MINT,
-            participant: wallet,
-            tokenProgram: TOKEN_PROGRAM_ID,
-          }),
+          contributeIx({ ...refs, participant: wallet }),
           wallet.equals(deployer.publicKey) ? [] : [actor.keypair],
           state,
           statePath,
@@ -760,18 +708,9 @@ async function main(): Promise<void> {
     const actor = walletByAddress.get(recipient.toBase58());
     if (!actor) throw new Error("Round-zero recipient is not a known member");
     await simulateAndSend(
-      connection,
+      sender,
       "settleRound0",
-      method("settleRound").accountsStrict({
-        config,
-        group,
-        recipientMember: actor.member,
-        potVault,
-        recipientToken: actor.ata,
-        mint: USDC_MINT,
-        keeper: keeper.publicKey,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      }),
+      settleRoundIx({ ...refs, recipient, keeper: keeper.publicKey }),
       [keeper],
       state,
       statePath,
@@ -789,37 +728,18 @@ async function main(): Promise<void> {
     const finalMemberState = await fetchMember(connection, finalActor.member);
     if (finalMemberState.lastContributedRound !== 1) {
       await simulateAndSend(
-        connection,
+        sender,
         "contributeRound1-finalRecipient",
-        method("contribute").accountsStrict({
-          config,
-          group,
-          member: finalActor.member,
-          source: finalActor.ata,
-          potVault,
-          collateralVault,
-          mint: USDC_MINT,
-          participant: finalRecipient,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        }),
+        contributeIx({ ...refs, participant: finalRecipient }),
         finalRecipient.equals(deployer.publicKey) ? [] : [finalActor.keypair],
         state,
         statePath,
       );
     }
 
-    const coverBuilder = (): TransactionBuilder => method("coverDefault").accountsStrict({
-      config,
-      group,
-      member: earlyActor.member,
-      potVault,
-      collateralVault,
-      mint: USDC_MINT,
-      keeper: keeper.publicKey,
-      tokenProgram: TOKEN_PROGRAM_ID,
-    });
+    const coverBuilder = () => coverDefaultIx({ ...refs, memberWallet: earlyRecipient, keeper: keeper.publicKey });
     if (!state.expectedEarlyCoverRejected) {
-      await expectSimulationFailure("coverDefault-before-grace", coverBuilder(), [keeper]);
+      await expectSimulationFailure(sender, "coverDefault-before-grace", coverBuilder(), [keeper]);
       state.expectedEarlyCoverRejected = true;
       writeState(statePath, state);
     }
@@ -827,7 +747,7 @@ async function main(): Promise<void> {
     const earlyMemberState = await fetchMember(connection, earlyActor.member);
     if (earlyMemberState.lastContributedRound !== 1) {
       await simulateAndSend(
-        connection,
+        sender,
         "coverDefaultRound1",
         coverBuilder(),
         [keeper],
@@ -836,18 +756,9 @@ async function main(): Promise<void> {
       );
     }
     await simulateAndSend(
-      connection,
+      sender,
       "settleRound1",
-      method("settleRound").accountsStrict({
-        config,
-        group,
-        recipientMember: finalActor.member,
-        potVault,
-        recipientToken: finalActor.ata,
-        mint: USDC_MINT,
-        keeper: keeper.publicKey,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      }),
+      settleRoundIx({ ...refs, recipient: finalRecipient, keeper: keeper.publicKey }),
       [keeper],
       state,
       statePath,
