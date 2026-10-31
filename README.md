@@ -2,7 +2,7 @@
 
 [![Ringio checks](https://github.com/furkan3152/ringio/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/furkan3152/ringio/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Save together. Get paid in turns.** Ringio is an invite-only rotating savings circle (ROSCA, _Altın Günü_) on Solana. Members contribute the same USDC amount every turn, one member receives the pot each turn, and members who are paid early lock collateral for the turns they still owe. "Take the pot and disappear" is covered by the program, not by trust.
+**Save together. Get paid in turns.** Ringio is an invite-only rotating savings circle (ROSCA; in Turkey, _Altın Günü_ or "gold day") on Solana. Members contribute the same USDC amount every turn, one member receives the pot each turn, and members who are paid early lock collateral for the turns they still owe. "Take the pot and disappear" is covered by the program, not by trust.
 
 > Ringio is pre-audit beta software. It runs on Solana devnet today and can be deployed to mainnet-beta and testnet (see below). Protection covers missed payments by members who were already paid out; it does not remove smart-contract, stablecoin, or wallet risk.
 
