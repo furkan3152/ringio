@@ -11,7 +11,7 @@ real funds is **not recommended** until all of the following are complete, and
 any mainnet pilot should cap circle amounts:
 
 - an independent program review;
-- adversarial LiteSVM or Mollusk integration coverage beyond the current lifecycle suite;
+- adversarial LiteSVM or Mollusk integration coverage beyond the current lifecycle and differential suites;
 - prolonged state-machine fuzzing;
 - verified SBF builds and reproducible deployment artifacts;
 - upgrade, pause, and emergency authorities transferred to a multisig;
@@ -59,9 +59,10 @@ public group code never authorizes membership.
   lifecycle completed with terminal conservation assertions, but exhaustive
   LiteSVM/local-validator adversarial coverage and maximum-roster compute
   profiling remain open.
-- Browser financial controls are explicitly non-signing previews until reviewed
-  Wallet Adapter transaction builders are wired; the E2E harness is not a
-  substitute for end-user signing UX.
+- The browser client builds, simulates, and wallet-signs every instruction, and
+  LiteSVM runs those builders against the program bytecode. There is no
+  automated browser/wallet end-to-end test, and the funded devnet E2E harness
+  is not a substitute for end-user signing UX review.
 - Commit-reveal prevents caller-selected ordering, but the last revealer can
   still abort the pre-custody group.
 - Pre-payout default is not collateral-covered. It terminates and unwinds the

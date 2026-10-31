@@ -10,7 +10,7 @@ The checks below cover five separate layers:
 
 Passing one layer does not prove the next one.
 
-Status: the program was rewritten from Anchor to Pinocchio with the same interface to cut deployment rent (657 KB → ~92 KB binary, ~4.6 → ~0.64 SOL locked). Rust 1.89 formatting, unit tests, clippy with warnings denied, the SBF build, the LiteSVM lifecycle suite, and the Anchor-equivalence differential suite pass. The history below describes the Anchor build that is still deployed on devnet until it is upgraded (see `docs/mainnet-deployment.md`, "Upgrading an existing deployment"). Program ID `JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy` is deployed on devnet; at the time, the downloaded bytecode exactly matched the Anchor artifact hash. The canonical config is initialized. On 2026-08-12, a two-member Group completed a funded two-round Circle-devnet-USDC lifecycle with an independent keeper, one collateral-covered default, zero terminal vault balances, and participant-balance conservation. Node 20.19.4 frontend lint/typecheck/build, 17/17 duration/matcher/privacy/binary-decoder tests, dependency audit with zero reported vulnerabilities, and real Group/API/AI HTTP smoke checks pass. LiteSVM coverage of malicious/substituted accounts now exists (differential suite); a funded devnet run on the Pinocchio build and a live OpenRouter response remain open.
+Status: the program was rewritten from Anchor to Pinocchio with the same interface to cut deployment rent (657 KB → ~92 KB binary, ~4.6 → ~0.64 SOL locked). Rust 1.89 formatting, unit tests, clippy with warnings denied, the SBF build, the LiteSVM lifecycle suite, and the Anchor-equivalence differential suite pass. Devnet still runs the original Anchor build (657,488 bytes, SHA-256 `c6a8367a…74ee9`, re-checked on 2026-10-31 with `npm --prefix web run program:fetch`), and the history below describes that build. The Pinocchio build becomes live only after an in-place upgrade (see `docs/mainnet-deployment.md`, "Upgrading an existing deployment"). Program ID `JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy` is deployed on devnet; at the time, the downloaded bytecode exactly matched the Anchor artifact hash. The canonical config is initialized. On 2026-08-12, a two-member Group completed a funded two-round Circle-devnet-USDC lifecycle with an independent keeper, one collateral-covered default, zero terminal vault balances, and participant-balance conservation. Node 20.19.4 frontend lint/typecheck/build, 17/17 duration/matcher/privacy/binary-decoder tests, dependency audit with zero reported vulnerabilities, and real Group/API/AI HTTP smoke checks pass. LiteSVM coverage of malicious/substituted accounts now exists (differential suite); a funded devnet run on the Pinocchio build and a live OpenRouter response remain open.
 
 ## 1. Prerequisites
 
@@ -199,13 +199,14 @@ The initializer is deliberately separate from deploy so authority and ProgramDat
 
 ## 7. Frontend configuration
 
-Use the exact variable names in the checked-in example environment file. A typical program-connected setup needs values equivalent to:
+Use the exact variable names in the checked-in example environment file. A typical devnet setup needs values equivalent to:
 
 ```dotenv
-NEXT_PUBLIC_SOLANA_CLUSTER=devnet
-NEXT_PUBLIC_SOLANA_RPC_URL=https://api.devnet.solana.com
-NEXT_PUBLIC_RINGIO_PROGRAM_ID=[PROGRAM_ID]
-NEXT_PUBLIC_USDC_MINT=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
+NEXT_PUBLIC_ENABLED_CLUSTERS=devnet
+NEXT_PUBLIC_DEFAULT_CLUSTER=devnet
+NEXT_PUBLIC_RPC_URL_DEVNET=https://api.devnet.solana.com
+NEXT_PUBLIC_PROGRAM_ID_DEVNET=[PROGRAM_ID]
+NEXT_PUBLIC_USDC_MINT_DEVNET=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
 
 # Server-only; omit for deterministic matcher fallback.
 OPENROUTER_API_KEY=[SERVER_ONLY_KEY]
@@ -229,11 +230,11 @@ Verify in the browser:
 - wallet network and UI network both say devnet;
 - the displayed program ID and mint match the deployed values;
 - no placeholder Group, member, payment, or balance appears when RPC data is empty or unavailable;
-- every unwired create/contribution action says `Preview` or `Simulation` and clearly states that no RPC simulation/signature occurred;
 - decoded Group, Member, mint, pot-vault, and collateral-vault facts come from confirmed devnet reads;
-- transaction previews show amount, mint, program, action, scheduled owner, and selected owner-controlled token account where applicable;
-- after a real confirmation, the UI refetches finalized/confirmed account state rather than assuming success;
-- after real client integration, RPC failure, wallet rejection, simulation failure, blockhash expiry, and program error remain distinguishable.
+- every signing card shows the network and asset mint (and the balance when tokens move) next to its button, and each wallet sees one next action for its state;
+- every transaction is simulated before the wallet opens, and a failed simulation is reported as a decoded program error without a signature request;
+- after a confirmation, the UI refetches confirmed account state rather than assuming success;
+- RPC failure, wallet rejection, simulation failure, blockhash expiry, and program error remain distinguishable.
 
 ## 8. End-to-end devnet smoke test
 
@@ -327,7 +328,7 @@ If a safety issue appears, use `set_paused` only if the deployed implementation 
 ## 11. Current limitations to disclose
 
 - Devnet tokens have no monetary value and devnet can reset or degrade.
-- Read-only deployed-account integration is not proof that the unwired wallet transaction previews can move funds.
+- The browser transaction builders are exercised against the program bytecode in LiteSVM; there is no automated browser/wallet end-to-end test.
 - The SBF artifact lives under ignored `target/`; reproduce it from pinned source and compare dumped deployed bytes (`network:status` → `matchesLocalArtifact`) before and after an upgrade.
 - A deterministic AI result is not proof that OpenRouter or GPT-4o was called.
 - Group codes and availability are derived from direct confirmed-RPC reads; without an indexer, discovery latency and public-RPC availability remain operational risks.

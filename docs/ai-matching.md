@@ -1,6 +1,6 @@
 # Ringio AI Group Matching
 
-Status: implemented and exercised against the deployed devnet program. The server decodes Ringio Group, Member, mint, and SPL vault accounts; derives collision-resistant display codes from Group addresses; hard-fails on RPC errors; and never substitutes static catalog rows. The deterministic bilingual matcher, privacy/input checks, API route, optional OpenRouter adapter, and exact custom-period formatter are checked in. Under Node.js 20.19.4, 17/17 web tests pass: 4 duration cases, 11 matcher/privacy/rate-limit cases, and 2 binary layout decoder cases. Real-Group listing, wallet filtering, natural-language matching, exact-code lookup, fallback/privacy, and homepage/API runtime smoke checks pass. This is not evidence of a live OpenRouter call.
+Status: implemented and exercised against the deployed devnet program. The server decodes Ringio Group, Member, mint, and SPL vault accounts; derives collision-resistant display codes from Group addresses; hard-fails on RPC errors; and never substitutes static catalog rows. The deterministic bilingual matcher, privacy/input checks, API route, optional OpenRouter adapter, and exact custom-period formatter are checked in. The matcher, privacy, rate-limit, and decoder cases run in `npm --prefix web test` (33/33 web unit tests pass on Node.js 24.22.2 as of 2026-10-31). Real-Group listing, wallet filtering, natural-language matching, exact-code lookup, fallback/privacy, and homepage/API runtime smoke checks pass. This is not evidence of a live OpenRouter call.
 
 ## Product boundary
 

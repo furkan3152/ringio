@@ -13,9 +13,9 @@ suites run full lifecycles with real SPL Token CPIs, and the differential suite
 substituted accounts, wrong signers, replays, prefunded PDAs, Token-2022 mints,
 and malformed instruction data, against both the original Anchor bytecode and
 this build, requiring identical outcomes, error codes, events, and account
-bytes. One external-script, two-member devnet lifecycle (on the Anchor build)
-exercised funded contributions, payouts, post-grace collateral cover, and
-terminal vault reconciliation. None of this establishes audit readiness.
+bytes. One external-script, two-member devnet lifecycle on the Anchor build
+(still the build deployed on devnet) exercised funded contributions, payouts,
+post-grace collateral cover, and terminal vault reconciliation. None of this establishes audit readiness.
 
 The Pinocchio rewrite keeps Anchor's account-validation order: every account is
 first deserialized (owner, discriminator, layout, signer, program id), then

@@ -51,7 +51,7 @@ Collateral is `contribution × turns still owed after your payout`: the first re
 
 | Network | Program | Asset | Status |
 | --- | --- | --- | --- |
-| Devnet | `JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy` | Circle devnet USDC `4zMM…ncDU` | Deployed and initialized |
+| Devnet | `JBhfRyHLDdTyGKz78hzeA26kKmtwd37PFkX3tvwmbmYy` | Circle devnet USDC `4zMM…ncDU` | Deployed and initialized; still runs the original Anchor build (same interface), upgrade to the Pinocchio build pending |
 | Mainnet-beta | same ID when deployed with the same keypair | Circle USDC `EPjF…Dt1v` | Ready to deploy; needs ~0.64 SOL locked rent (~1.3 SOL in the wallet during deploy) + config init |
 | Testnet | same ID when deployed with the same keypair | Your SPL test token | Ready to deploy; needs a test mint |
 
