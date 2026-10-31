@@ -14,7 +14,7 @@ Status: the program was rewritten from Anchor to Pinocchio with the same interfa
 
 ## 1. Prerequisites
 
-Use the repository-pinned Node.js `20.19.4` and Rust `1.89.0`, plus Agave (Solana) CLI `2.3.x` (provides `cargo build-sbf`) and SPL Token CLI. Anchor CLI is no longer needed. Do not silently upgrade the toolchain in a release run.
+Use the repository-pinned Node.js (`.nvmrc`, currently `24.22.2`) and Rust `1.89.0`, plus Agave (Solana) CLI `2.3.x` (provides `cargo build-sbf`) and SPL Token CLI. Anchor CLI is no longer needed. Do not silently upgrade the toolchain in a release run.
 
 ```bash
 rustc --version

@@ -68,4 +68,4 @@ public group code never authorizes membership.
   failed round, so invite-only membership remains an economic trust boundary.
 - The repository intentionally resolves browser-only Wallet Adapter peers
   without auto-installing the unused React Native/Metro toolchain. Dependency
-  audit and Node 20 compatibility checks are part of CI/release verification.
+  audit and checks on the pinned Node LTS (`.nvmrc`) are part of CI/release verification.

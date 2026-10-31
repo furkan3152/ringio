@@ -59,7 +59,7 @@ Check live readiness at any time: `npm --prefix web run network:status`. The ful
 
 ## Local development
 
-Prerequisites: Node.js `20.19.4` (`.nvmrc`), Rust `1.89.0` (`rust-toolchain.toml`). The Agave (Solana) CLI is only needed to build (`cargo build-sbf`) or deploy the program.
+Prerequisites: Node.js 24 LTS (`.nvmrc` pins `24.22.2`), Rust `1.89.0` (`rust-toolchain.toml`). The Agave (Solana) CLI is only needed to build (`cargo build-sbf`) or deploy the program.
 
 ```bash
 nvm use

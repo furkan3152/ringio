@@ -11,7 +11,7 @@ Next.js 16 + React 19 client for the Ringio savings-circle program on Solana.
 ## Run
 
 ```bash
-nvm use                 # Node 20.19.4
+nvm use                 # Node 24 LTS (see ../.nvmrc)
 npm --prefix web ci
 npm run dev
 ```
