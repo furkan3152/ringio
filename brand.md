@@ -1,6 +1,6 @@
 # Ringio brand
 
-_Status: "gold ring" direction (replaces the earlier functional-Bauhaus exploration)_
+_Status: implemented ("gold ring" direction). Design tokens live at the top of [`web/src/app/globals.css`](web/src/app/globals.css); the ring dial ([`web/src/components/ui/ring-dial.tsx`](web/src/components/ui/ring-dial.tsx)) is the signature visual._
 
 Ringio brings trusted savings circles on-chain. The interface should feel like a calm, premium money app that happens to run on Solana: dark ink surfaces, one warm gold accent that nods to _Altın Günü_ ("gold day"), generous spacing, and numbers that are always exact and legible.
 
